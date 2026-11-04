@@ -1,0 +1,48 @@
+<Window x:Class="Startwerk.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Startwerk" Width="1120" Height="820" MinWidth="960" MinHeight="740" Background="#10151F" Foreground="#EDF2FA" FontFamily="Segoe UI" WindowStartupLocation="CenterScreen" Closing="OnClosing">
+ <Window.Resources>
+  <Style TargetType="Button"><Setter Property="Background" Value="#2C3C53"/><Setter Property="Foreground" Value="White"/><Setter Property="Padding" Value="16,10"/><Setter Property="Margin" Value="0,0,10,0"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Cursor" Value="Hand"/></Style>
+  <Style TargetType="TextBox"><Setter Property="Background" Value="#1B2534"/><Setter Property="Foreground" Value="White"/><Setter Property="BorderBrush" Value="#3A4B63"/><Setter Property="Padding" Value="10"/><Setter Property="FontSize" Value="14"/></Style>
+  <Style TargetType="ComboBox"><Setter Property="FontSize" Value="14"/><Setter Property="Padding" Value="9"/><Setter Property="Foreground" Value="#10151F"/></Style>
+  <Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style>
+  <Style TargetType="RadioButton">
+   <Setter Property="Margin" Value="0,0,0,6"/><Setter Property="FontSize" Value="15"/><Setter Property="Foreground" Value="#C8D5E6"/><Setter Property="Cursor" Value="Hand"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton"><Border x:Name="Tile" Background="Transparent" CornerRadius="6" Padding="12,13"><ContentPresenter/></Border><ControlTemplate.Triggers><Trigger Property="IsChecked" Value="True"><Setter TargetName="Tile" Property="Background" Value="#203F3B"/><Setter Property="Foreground" Value="#6EE7C2"/></Trigger><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Tile" Property="Background" Value="#243247"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+  </Style>
+ </Window.Resources>
+ <Grid Margin="28">
+  <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="26"/><ColumnDefinition/></Grid.ColumnDefinitions>
+  <StackPanel><TextBlock Text="STARTWERK" Foreground="#6EE7C2" FontSize="20" FontWeight="Bold"/><TextBlock Text="Dein USB-Stick. Dein System." Foreground="#9DAEC5" FontSize="12" Margin="0,8,0,32"/>
+   <StackPanel x:Name="Navigation"><RadioButton x:Name="WindowsMode" IsChecked="True" GroupName="Mode" Content="Windows → USB" Checked="ModeChanged"/><RadioButton x:Name="RawMode" GroupName="Mode" Content="Linux / IMG → USB" Checked="ModeChanged"/></StackPanel>
+   <Button x:Name="UpdateButton" Content="Updates" Click="OpenUpdates" Margin="0,10,0,0"/>
+   <Button x:Name="WebsiteButton" Content="Webseiten prüfen" Click="OpenWebsites" Margin="0,10,0,0"/>
+   <Border Background="#1B2534" Padding="14" CornerRadius="8" Margin="0,24,0,0"><TextBlock x:Name="AppVersion" Foreground="#9DAEC5" FontSize="12"/></Border>
+  </StackPanel>
+  <Grid Grid.Column="2"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+   <StackPanel><TextBlock x:Name="Heading" Text="Windows-USB erstellen" FontSize="29" FontWeight="SemiBold"/><TextBlock x:Name="ModeHint" Text="Windows und Linux herunterladen und bootfähige USB-Sticks erstellen." Foreground="#9DAEC5" Margin="0,8,0,22"/></StackPanel>
+   <StackPanel Grid.Row="1" x:Name="Settings">
+    <TextBlock Text="01   QUELLE AUSWÄHLEN" Foreground="#6EE7C2" FontWeight="Bold" Margin="0,0,0,9"/>
+    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox x:Name="ImagePath" IsReadOnly="True" VerticalContentAlignment="Center"/><Button x:Name="BrowseButton" Grid.Column="1" Content="Datei wählen …" Click="Browse" Margin="12,0,0,0"/></Grid>
+    <TextBlock x:Name="ImageInfo" Text="Noch keine Quelle ausgewählt." Foreground="#9DAEC5" Margin="0,8,0,20"/>
+    <Button x:Name="GetIsoButton" Content="Original-ISO herunterladen …" Click="GetIso" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,0,0,18"/>
+    <TextBlock Text="02   ZIEL AUSWÄHLEN" Foreground="#6EE7C2" FontWeight="Bold" Margin="0,0,0,9"/>
+    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><ComboBox x:Name="Targets" DisplayMemberPath="Label"/><Button Grid.Column="1" Content="Aktualisieren" Click="RefreshClick" Margin="12,0,0,0"/></Grid>
+    <TextBlock x:Name="TargetHint" Foreground="#9DAEC5" Margin="0,8,0,16" Text="USB-Stick anschließen und das passende Ziel auswählen."/>
+    <StackPanel x:Name="BootOptions" Visibility="Collapsed" Margin="0,0,0,12">
+     <TextBlock Text="03   BOOT-VERFAHREN" Foreground="#6EE7C2" FontWeight="Bold" Margin="0,0,0,8"/>
+     <ComboBox x:Name="BootChoice" SelectedIndex="0" SelectionChanged="BootChanged">
+      <ComboBoxItem Content="UEFI – moderne PCs (GPT / FAT32)" Tag="UEFI"/>
+      <ComboBoxItem Content="BIOS / Legacy – ältere PCs (MBR / FAT32)" Tag="BIOS"/>
+      <ComboBoxItem Content="BIOS + UEFI – beide (MBR / FAT32)" Tag="Both"/>
+     </ComboBox>
+    </StackPanel>
+    <TextBlock x:Name="BootInfo" Visibility="Collapsed" Foreground="#9DAEC5" Margin="0,0,0,12"/>
+    <CheckBox x:Name="Verify" IsChecked="True" Visibility="Collapsed" Foreground="#C8D5E6" Content="USB-Daten nach dem Schreiben prüfen" Margin="0,0,0,12"/>
+   </StackPanel>
+   <Border Grid.Row="2" Background="#202D3E" Padding="14" CornerRadius="8" Margin="0,0,0,18"><TextBlock x:Name="Notice" Text="Alle Dateien auf dem ausgewählten USB-Ziel werden gelöscht. Prüfe vor dem Start Modell, Größe und Datenträgernummer." Foreground="#C8D5E6"/></Border>
+   <StackPanel Grid.Row="3" Orientation="Horizontal"><Button x:Name="StartButton" Content="USB-Stick erstellen" Background="#147A64" Click="Start" FontWeight="SemiBold"/><TextBlock x:Name="Status" Text="Bereit" VerticalAlignment="Center" Foreground="#9DAEC5"/></StackPanel>
+   <ProgressBar x:Name="Progress" Grid.Row="4" Height="5" BorderThickness="0" Margin="0,18,0,12" Background="#243247" Foreground="#6EE7C2"/>
+   <TextBox x:Name="Log" Grid.Row="5" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12" Background="#0C1119"/>
+   <TextBlock Grid.Row="6" Text="Windows und Linux auf USB · Bootfähige Abbilder · Datenprüfung" Foreground="#7E91AB" Margin="0,12,0,0" FontSize="11"/>
+  </Grid>
+ </Grid>
+</Window>

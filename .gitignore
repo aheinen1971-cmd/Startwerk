@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+/dist/
+/package/
+*.user
+*.pfx
+*.key
+*.pem
+!/update-public.pem
+*-private.*
+/update-keys/
+/gh-config/
+*.partial

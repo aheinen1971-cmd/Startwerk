@@ -1,0 +1,59 @@
+name: Build and publish Startwerk
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Validate update protocol
+        shell: pwsh
+        run: dotnet run --project tools/UpdaterTests/UpdaterTests.csproj -c Release
+      - name: Validate ISO downloads
+        shell: pwsh
+        run: dotnet run --project tools/IsoDownloadTests/IsoDownloadTests.csproj -c Release
+      - name: Validate website safety and six-hour schedule
+        shell: pwsh
+        run: dotnet run --project tools/WebsiteTests/WebsiteTests.csproj -c Release
+      - name: Validate USB image recognition and boot plans
+        shell: pwsh
+        run: dotnet run --project tools/UsbPlanTests/UsbPlanTests.csproj -c Release
+      - name: Publish single-file EXE
+        shell: pwsh
+        run: dotnet publish Startwerk.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o package
+      - name: Sign release description
+        shell: pwsh
+        env:
+          STARTWERK_UPDATE_KEY: ${{ secrets.STARTWERK_UPDATE_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:STARTWERK_UPDATE_KEY)) { throw 'Repository secret STARTWERK_UPDATE_KEY is missing.' }
+          $version = ([xml](Get-Content Startwerk.csproj)).Project.PropertyGroup.Version
+          $version = [string]$version
+          $expectedTag = 'v' + $version
+          if ($env:GITHUB_REF_TYPE -ne 'tag' -or $env:GITHUB_REF_NAME -ne $expectedTag) { throw "Publish from matching version tag $expectedTag." }
+          $keyPath = Join-Path $env:RUNNER_TEMP 'startwerk-release-key.pem'
+          try {
+            [IO.File]::WriteAllText($keyPath, $env:STARTWERK_UPDATE_KEY)
+            dotnet run --project tools/ReleaseSigner/ReleaseSigner.csproj -c Release -- sign package/Startwerk.exe $env:GITHUB_REPOSITORY $version $keyPath RELEASE-NOTES.md package/update.json
+            if ($LASTEXITCODE -ne 0) { throw 'Release signing failed.' }
+            dotnet run --project tools/ReleaseSigner/ReleaseSigner.csproj -c Release -- verify package/update.json update-public.pem
+            if ($LASTEXITCODE -ne 0) { throw 'Signing key does not match the app public key.' }
+          } finally {
+            if (Test-Path -LiteralPath $keyPath) { Remove-Item -LiteralPath $keyPath -Force }
+          }
+      - name: Publish public release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME package/Startwerk.exe package/update.json --repo $env:GITHUB_REPOSITORY --verify-tag --title "Startwerk $env:GITHUB_REF_NAME" --notes-file RELEASE-NOTES.md
