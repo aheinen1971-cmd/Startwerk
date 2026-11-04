@@ -1,4 +1,4 @@
-<Window x:Class="Startwerk.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Startwerk" Width="1120" Height="820" MinWidth="960" MinHeight="740" Background="#10151F" Foreground="#EDF2FA" FontFamily="Segoe UI" WindowStartupLocation="CenterScreen" Closing="OnClosing">
+<Window x:Class="Startwerk.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Startwerk" Width="1120" Height="900" MinWidth="960" MinHeight="740" Background="#10151F" Foreground="#EDF2FA" FontFamily="Segoe UI" WindowStartupLocation="CenterScreen" Closing="OnClosing">
  <Window.Resources>
   <Style TargetType="Button"><Setter Property="Background" Value="#2C3C53"/><Setter Property="Foreground" Value="White"/><Setter Property="Padding" Value="16,10"/><Setter Property="Margin" Value="0,0,10,0"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Cursor" Value="Hand"/></Style>
   <Style TargetType="TextBox"><Setter Property="Background" Value="#1B2534"/><Setter Property="Foreground" Value="White"/><Setter Property="BorderBrush" Value="#3A4B63"/><Setter Property="Padding" Value="10"/><Setter Property="FontSize" Value="14"/></Style>
@@ -17,7 +17,7 @@
    <Button x:Name="WebsiteButton" Content="Webseiten prüfen" Click="OpenWebsites" Margin="0,10,0,0"/>
    <Border Background="#1B2534" Padding="14" CornerRadius="8" Margin="0,24,0,0"><TextBlock x:Name="AppVersion" Foreground="#9DAEC5" FontSize="12"/></Border>
   </StackPanel>
-  <Grid Grid.Column="2"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto"><Grid MinHeight="750"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
    <StackPanel><TextBlock x:Name="Heading" Text="Windows-USB erstellen" FontSize="29" FontWeight="SemiBold"/><TextBlock x:Name="ModeHint" Text="Windows und Linux herunterladen und bootfähige USB-Sticks erstellen." Foreground="#9DAEC5" Margin="0,8,0,22"/></StackPanel>
    <StackPanel Grid.Row="1" x:Name="Settings">
     <TextBlock Text="01   QUELLE AUSWÄHLEN" Foreground="#6EE7C2" FontWeight="Bold" Margin="0,0,0,9"/>
@@ -36,13 +36,17 @@
      </ComboBox>
     </StackPanel>
     <TextBlock x:Name="BootInfo" Visibility="Collapsed" Foreground="#9DAEC5" Margin="0,0,0,12"/>
+    <StackPanel x:Name="CompatibilityOptions" Margin="0,0,0,10">
+     <CheckBox x:Name="Windows11Compatibility" IsChecked="False" IsEnabled="False" Foreground="#C8D5E6" Content="Windows 11 für nicht unterstützte Hardware vorbereiten" Checked="CompatibilityChanged" Unchecked="CompatibilityChanged"/>
+     <TextBlock Foreground="#9DAEC5" FontSize="11" Margin="0,5,0,0" Text="Windows-11-ISO auswählen. Optional TPM-, Secure-Boot- und RAM-Prüfungen beim USB-Start überspringen. Fehlende CPU-Befehle werden nicht ersetzt; Support und Updates sind nicht garantiert."/>
+    </StackPanel>
     <CheckBox x:Name="Verify" IsChecked="True" Visibility="Collapsed" Foreground="#C8D5E6" Content="USB-Daten nach dem Schreiben prüfen" Margin="0,0,0,12"/>
    </StackPanel>
    <Border Grid.Row="2" Background="#202D3E" Padding="14" CornerRadius="8" Margin="0,0,0,18"><TextBlock x:Name="Notice" Text="Alle Dateien auf dem ausgewählten USB-Ziel werden gelöscht. Prüfe vor dem Start Modell, Größe und Datenträgernummer." Foreground="#C8D5E6"/></Border>
    <StackPanel Grid.Row="3" Orientation="Horizontal"><Button x:Name="StartButton" Content="USB-Stick erstellen" Background="#147A64" Click="Start" FontWeight="SemiBold"/><TextBlock x:Name="Status" Text="Bereit" VerticalAlignment="Center" Foreground="#9DAEC5"/></StackPanel>
    <ProgressBar x:Name="Progress" Grid.Row="4" Height="5" BorderThickness="0" Margin="0,18,0,12" Background="#243247" Foreground="#6EE7C2"/>
-   <TextBox x:Name="Log" Grid.Row="5" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12" Background="#0C1119"/>
+   <TextBox x:Name="Log" MinHeight="90" Grid.Row="5" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12" Background="#0C1119"/>
    <TextBlock Grid.Row="6" Text="Windows und Linux auf USB · Bootfähige Abbilder · Datenprüfung" Foreground="#7E91AB" Margin="0,12,0,0" FontSize="11"/>
-  </Grid>
+  </Grid></ScrollViewer>
  </Grid>
 </Window>

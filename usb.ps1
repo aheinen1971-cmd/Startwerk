@@ -22,12 +22,63 @@ function Get-CheckedDisk($Request) {
 function Get-Volumes($DiskNumber) {
     return @(Get-Partition -DiskNumber $DiskNumber | ForEach-Object { $_.AccessPaths } | Where-Object { $_ -match '^\\\\\?\\Volume\{' } | Select-Object -Unique)
 }
+function Get-CompatibilityFacts($Info) {
+    $architecture=switch ([int]$Info.Architecture) { 9 {'amd64'} 12 {'arm64'} default {''} }
+    $version=[version]$Info.Version
+    return [pscustomobject]@{Windows11=[bool]($Info.InstallationType -eq 'Client' -and $version.Major -eq 10 -and $version.Build -ge 22000 -and $architecture -ne '');Architecture=$architecture}
+}
 function Get-ImageFacts($Source) {
     $install = (Test-Path -LiteralPath (Join-Path $Source 'sources\install.wim')) -or (Test-Path -LiteralPath (Join-Path $Source 'sources\install.esd')) -or (Test-Path -LiteralPath (Join-Path $Source 'sources\install.swm'))
     $windows = (Test-Path -LiteralPath (Join-Path $Source 'sources\boot.wim')) -and $install
     $efi = @(Get-ChildItem -LiteralPath (Join-Path $Source 'efi\boot') -Filter 'boot*.efi' -File -ErrorAction SilentlyContinue).Count -gt 0
     $bios = (Test-Path -LiteralPath (Join-Path $Source 'bootmgr')) -and (Test-Path -LiteralPath (Join-Path $Source 'boot\bcd'))
-    return [pscustomobject]@{WindowsInstall=[bool]$windows; Efi=[bool]$efi; Bios=[bool]$bios}
+    $win11=$false; $architecture=''
+    if ($windows) {
+        $installFile=@('sources\install.wim','sources\install.esd') | ForEach-Object { Join-Path $Source $_ } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if ($installFile) {
+            try {
+                $info=Get-WindowsImage -ImagePath $installFile -Index 1 -ErrorAction Stop
+                $compat=Get-CompatibilityFacts $info; $architecture=$compat.Architecture; $win11=$compat.Windows11
+            } catch { $win11=$false; $architecture='' }
+        }
+    }
+    return [pscustomobject]@{WindowsInstall=[bool]$windows; Efi=[bool]$efi; Bios=[bool]$bios; Windows11=[bool]$win11; Architecture=$architecture}
+}
+function New-CompatibilityAnswer([string]$Architecture) {
+    if ($Architecture -notin @('amd64','arm64')) { throw 'Nicht unterstuetzte Windows-11-Architektur.' }
+    $doc=New-Object System.Xml.XmlDocument
+    $ns='urn:schemas-microsoft-com:unattend'
+    $root=$doc.CreateElement('unattend',$ns); [void]$doc.AppendChild($root)
+    $settings=$doc.CreateElement('settings',$ns); $settings.SetAttribute('pass','windowsPE'); [void]$root.AppendChild($settings)
+    $component=$doc.CreateElement('component',$ns)
+    foreach ($pair in @(@('name','Microsoft-Windows-Setup'),@('processorArchitecture',$Architecture),@('publicKeyToken','31bf3856ad364e35'),@('language','neutral'),@('versionScope','nonSxS'))) { $component.SetAttribute($pair[0],$pair[1]) }
+    [void]$settings.AppendChild($component); $run=$doc.CreateElement('RunSynchronous',$ns); [void]$component.AppendChild($run)
+    $order=0
+    foreach ($value in @('BypassTPMCheck','BypassSecureBootCheck','BypassRAMCheck')) {
+        $order++; $command=$doc.CreateElement('RunSynchronousCommand',$ns)
+        $action=$doc.CreateAttribute('wcm','action','http://schemas.microsoft.com/WMIConfig/2002/State'); $action.Value='add'; [void]$command.Attributes.Append($action)
+        foreach ($pair in @(@('Order',[string]$order),@('Path',('reg.exe ADD HKLM\SYSTEM\Setup\LabConfig /v '+$value+' /t REG_DWORD /d 1 /f')))) {
+            $element=$doc.CreateElement($pair[0],$ns); $element.InnerText=$pair[1]; [void]$command.AppendChild($element)
+        }
+        [void]$run.AppendChild($command)
+    }
+    return $doc.OuterXml
+}
+function Assert-CompatibilitySource($Source,$Facts) {
+    if (-not $Facts.WindowsInstall -or -not $Facts.Windows11 -or $Facts.Architecture -notin @('amd64','arm64')) { throw 'Kompatibilitaet benoetigt eine erkannte Windows-11-Client-ISO (x64/ARM64) mit WIM-/ESD-Metadaten.' }
+    foreach ($name in @('autounattend.xml','unattend.xml','sources\unattend.xml','sources\autounattend.xml')) {
+        if (Test-Path -LiteralPath (Join-Path $Source $name)) { throw 'Die ISO enthaelt bereits eine Antwortdatei. Kompatibilitaet deaktivieren oder eine unveraenderte Microsoft-ISO verwenden.' }
+    }
+}
+function Write-CompatibilityAnswer($Destination,[string]$Xml) {
+    $path=Join-Path $Destination 'autounattend.xml'
+    # CreateNew prevents even a late collision from replacing an existing file.
+    $bytes=(New-Object Text.UTF8Encoding($false)).GetBytes($Xml)
+    $output=[IO.File]::Open($path,'CreateNew','Write','None')
+    try { $output.Write($bytes,0,$bytes.Length); $output.Flush($true) } finally { $output.Dispose() }
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try { $expected=[BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','') } finally { $sha.Dispose() }
+    if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -cne $expected) { throw 'Antwortdatei-Pruefsumme stimmt nicht ueberein.' }
 }
 function Assert-BootMode($Mode, $Facts) {
     if ($Mode -notin @('UEFI','BIOS','Both')) { throw 'Ungueltiges Windows-Bootverfahren.' }
@@ -115,6 +166,7 @@ public static class StartwerkNative {
 '@
 
 if ($SelfTest) {
+    foreach ($name in @('Get-FileHash','Get-WindowsImage','Get-Disk')) { if (-not (Get-Command $name -ErrorAction Stop)) { throw "Windows-Modul fehlt: $name" } }
     $bootChecks = 0
     foreach ($efi in @($false,$true)) {
         foreach ($bios in @($false,$true)) {
@@ -129,6 +181,38 @@ if ($SelfTest) {
         }
     }
     Write-Output "PASS: $bootChecks Windows boot capability/selection combinations validated before device writes."
+    foreach ($case in @(@('Client','10.0.22000.1',9,$true),@('Client','10.0.26100.1',12,$true),@('Client','10.0.19045.1',9,$false),@('Server','10.0.26100.1',9,$false),@('Client','10.0.26100.1',0,$false))) {
+        $facts=Get-CompatibilityFacts ([pscustomobject]@{InstallationType=$case[0];Version=$case[1];Architecture=$case[2]})
+        if ($facts.Windows11 -ne $case[3]) { throw 'Windows-11-Metadaten falsch erkannt.' }
+    }
+    foreach ($arch in @('amd64','arm64')) {
+        [xml]$answer=New-CompatibilityAnswer $arch
+        $mgr=New-Object System.Xml.XmlNamespaceManager($answer.NameTable); $mgr.AddNamespace('u','urn:schemas-microsoft-com:unattend')
+        $component=$answer.SelectSingleNode('/u:unattend/u:settings[@pass="windowsPE"]/u:component',$mgr)
+        $commands=@($component.SelectNodes('u:RunSynchronous/u:RunSynchronousCommand',$mgr))
+        if ($component.processorArchitecture -ne $arch -or $commands.Count -ne 3) { throw 'Antwortdatei-Struktur fehlerhaft.' }
+        $i=0
+        foreach ($key in @('BypassTPMCheck','BypassSecureBootCheck','BypassRAMCheck')) {
+            $cmd=$commands[$i]; $i++
+            if ($cmd.Order -ne [string]$i -or $cmd.Path -cne ('reg.exe ADD HKLM\SYSTEM\Setup\LabConfig /v '+$key+' /t REG_DWORD /d 1 /f')) { throw 'Antwortdatei-Befehle fehlerhaft.' }
+        }
+        if ($answer.OuterXml -match 'DiskConfiguration|ProductKey|AcceptEula|UserAccounts|oobeSystem|MoSetup|BypassStorageCheck') { throw 'Antwortdatei enthaelt unerwartete Einstellungen.' }
+    }
+    $rejected=$false; try { New-CompatibilityAnswer 'x86' | Out-Null } catch { $rejected=$true }; if (-not $rejected) { throw 'x86-Kompatibilitaet akzeptiert.' }
+    $compatFolder=Join-Path ([IO.Path]::GetTempPath()) ('Startwerk-compat-'+[guid]::NewGuid())
+    [void][IO.Directory]::CreateDirectory($compatFolder)
+    try {
+        $facts=[pscustomobject]@{WindowsInstall=$true;Windows11=$true;Architecture='amd64'}
+        Assert-CompatibilitySource $compatFolder $facts
+        $facts.Windows11=$false; $rejected=$false; try { Assert-CompatibilitySource $compatFolder $facts } catch { $rejected=$true }; if (-not $rejected) { throw 'Windows-10-/Server-Abbild akzeptiert.' }
+        $facts.Windows11=$true
+        $xml=New-CompatibilityAnswer 'amd64'; Write-CompatibilityAnswer $compatFolder $xml
+        if ([IO.File]::ReadAllText((Join-Path $compatFolder 'autounattend.xml')) -cne $xml) { throw 'Antwortdatei wurde nicht korrekt gespeichert.' }
+        $rejected=$false; try { Write-CompatibilityAnswer $compatFolder 'replacement' } catch { $rejected=$true }; if (-not $rejected) { throw 'Antwortdatei wurde ersetzt.' }
+        if ([IO.File]::ReadAllText((Join-Path $compatFolder 'autounattend.xml')) -cne $xml) { throw 'Vorhandene Antwortdatei veraendert.' }
+        $rejected=$false; try { Assert-CompatibilitySource $compatFolder $facts } catch { $rejected=$true }; if (-not $rejected) { throw 'Vorhandene Antwortdatei ueberschrieben.' }
+    } finally { Remove-Item -LiteralPath (Join-Path $compatFolder 'autounattend.xml') -ErrorAction SilentlyContinue; [IO.Directory]::Delete($compatFolder) }
+    Write-Output 'PASS: Windows 11 answer file for amd64/arm64, three scoped WinPE checks, invalid architecture/non-client and answer-file collision rejected. Host registry unchanged.'
     $request = [pscustomobject]@{Number=8; UniqueId='TEST-USB'; Size=16000000000; Serial='123'}
     $good = @{Number=8; UniqueId='TEST-USB'; Size=16000000000; SerialNumber='123'; BusType='USB'; IsBoot=$false; IsSystem=$false; IsReadOnly=$false; IsOffline=$false}
     Assert-Target ([pscustomobject]$good) $request
@@ -171,6 +255,7 @@ try {
         Get-ImageFacts "$($volume[0].DriveLetter):\" | ConvertTo-Json -Compress
         return
     }
+    if ($request.Windows11Compatibility -and -not $request.Windows) { throw 'Kompatibilitaet ist nur im Windows-USB-Modus moeglich.' }
     $disk = Get-CheckedDisk $request
     $imagePath = [IO.Path]::GetFullPath([string]$request.Path)
     Assert-LocalSource $imagePath $disk.Number
@@ -196,6 +281,11 @@ try {
         $source = "$($volume[0].DriveLetter):\"
         $facts = Get-ImageFacts $source
         if (-not $facts.WindowsInstall) { throw 'Keine unterstuetzte Windows-Installations-ISO erkannt.' }
+        $compatibilityXml=$null
+        if ($request.Windows11Compatibility) {
+            Assert-CompatibilitySource $source $facts
+            $compatibilityXml=New-CompatibilityAnswer $facts.Architecture
+        }
         $bootMode = [string]$request.BootMode
         Assert-BootMode $bootMode $facts
         $bios = $bootMode -in @('BIOS','Both')
@@ -263,6 +353,10 @@ try {
         }
         if ($large.Count -gt 0) {
             foreach ($file in $splitFiles) { [IO.File]::Copy($file.FullName,(Join-Path $destination ('sources\' + $file.Name)),$true) }
+        }
+        if ($compatibilityXml) {
+            Write-CompatibilityAnswer $destination $compatibilityXml
+            Write-Output 'Windows-11-Kompatibilitaet vorbereitet: TPM/Secure Boot/RAM beim USB-Start; keine CPU-Emulation, keine Update-Garantie.'
         }
         if ($request.Verify) {
             Write-Output 'Dateien werden mit SHA-256 verglichen ...'

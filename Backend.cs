@@ -20,14 +20,18 @@ public static class Backend
     public static string RunPs(string command)
     {
         var psi = new ProcessStartInfo(PowerShell) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
+        psi.Environment["PSModulePath"]=Path.Combine(Path.GetDirectoryName(PowerShell)!,"Modules");
         psi.ArgumentList.Add("-NoProfile"); psi.ArgumentList.Add("-NonInteractive"); psi.ArgumentList.Add("-EncodedCommand");
         psi.ArgumentList.Add(Convert.ToBase64String(Encoding.Unicode.GetBytes("[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $ErrorActionPreference='Stop'; " + command)));
         using var process = Process.Start(psi)!;
         var stderr = process.StandardError.ReadToEndAsync(); string result = process.StandardOutput.ReadToEnd(); process.WaitForExit();
         if (process.ExitCode != 0) throw new IOException(stderr.GetAwaiter().GetResult()); return result;
     }
-    public static Task WriteUsb(string path, Target target, bool windows, bool verify, Action<string> log, string bootMode = "UEFI")
-        => RunEmbeddedUsb(false, new { Path = path, target.Number, target.UniqueId, target.Size, target.Serial, Windows = windows, Verify = verify, BootMode = windows ? bootMode : "Image" }, log);
+    public static Task WriteUsb(string path, Target target, bool windows, bool verify, Action<string> log, string bootMode = "UEFI", bool windows11Compatibility=false)
+    {
+        if(windows11Compatibility&&!windows)throw new IOException("Windows-11-Kompatibilität ist nur im Windows-USB-Modus verfügbar.");
+        return RunEmbeddedUsb(false, new { Path = path, target.Number, target.UniqueId, target.Size, target.Serial, Windows = windows, Verify = verify, BootMode = windows ? bootMode : "Image", Windows11Compatibility=windows11Compatibility }, log);
+    }
     public static async Task<IsoFacts> InspectIso(string path)
     {
         var lines = new List<string>();
@@ -44,6 +48,7 @@ public static class Backend
         // Only this short fixed bootstrap is on the command line; no script file is needed.
         const string bootstrap = "[Console]::InputEncoding=New-Object System.Text.UTF8Encoding($false); [Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false); $ErrorActionPreference='Stop'; try { $config=([Console]::ReadLine() | ConvertFrom-Json); $body=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($config.Script)); & ([ScriptBlock]::Create($body)) -SelfTest:([bool]$config.SelfTest) -ApplicationPath $config.ApplicationPath } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }";
         var psi = new ProcessStartInfo(PowerShell) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8, StandardInputEncoding = new UTF8Encoding(false) };
+        psi.Environment["PSModulePath"]=Path.Combine(Path.GetDirectoryName(PowerShell)!,"Modules");
         foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(bootstrap)) }) psi.ArgumentList.Add(arg);
         using var process = Process.Start(psi)!;
         string applicationPath = string.Equals(Path.GetFileNameWithoutExtension(Environment.ProcessPath), "dotnet", StringComparison.OrdinalIgnoreCase) ? Path.Combine(AppContext.BaseDirectory, "Startwerk.dll") : Environment.ProcessPath!;

@@ -13,6 +13,15 @@ try
     Reject(()=>UsbPlan.Create(raw,"UEFI"),"raw image cannot be falsely converted to UEFI");
     var windows=await UsbImages.Inspect(path,_=>Task.FromResult(new IsoFacts(true,true,true)));
     Check(windows.Windows,"Windows install files take precedence over hybrid signature");
+    var win11=windows with{Windows11=true,Architecture="amd64"};
+    Check(!UsbPlan.Create(win11,"UEFI").Windows11Compatibility,"Windows 11 compatibility stays off by default");
+    foreach(var mode in new[]{"UEFI","BIOS","Both"})Check(UsbPlan.Create(win11,mode,true).Windows11Compatibility,"Windows 11 opt-in supported with "+mode);
+    Check(UsbPlan.Create(win11 with{Architecture="arm64"},"UEFI",true).Windows11Compatibility,"ARM64 uses its own Windows 11 setup architecture");
+    Reject(()=>UsbPlan.Create(windows,"UEFI",true),"unknown or older Windows cannot enable compatibility");
+    Reject(()=>UsbPlan.Create(raw,"Image",true),"Linux raw image cannot enable Windows 11 compatibility");
+    Reject(()=>UsbPlan.Create(win11 with{Architecture="x86"},"BIOS",true),"32-bit image cannot enable Windows 11 compatibility");
+    var compatSummary=UsbPlan.Create(win11,"Both",true).Summary(new Target("usb","TEST",7,"TEST",16000000000,"SERIAL"),true);
+    Check(compatSummary.Contains("Kompatibilität EIN")&&compatSummary.Contains("TPM")&&compatSummary.Contains("USB-Start")&&compatSummary.Contains("nicht garantiert"),"final confirmation explicitly lists compatibility and its limits");
     foreach(var mode in new[]{"UEFI","BIOS","Both"})Check(UsbPlan.Create(windows,mode).BootMode==mode,"Windows selection: "+mode);
     Check(UsbPlan.Create(windows,"UEFI").Description.Contains("GPT"),"UEFI uses GPT");
     Check(UsbPlan.Create(windows,"Both").Description.Contains("MBR"),"dual boot uses MBR");
@@ -30,6 +39,7 @@ try
     Check((await UsbImages.Inspect(img)).PartitionTable=="GPT","GPT image with 4 KiB sectors recognized");
     var lines=new List<string>();await Backend.TestEmbeddedUsb(lines.Add);
     Check(lines.Any(x=>x.Contains("16 Windows boot"))&&lines.Any(x=>x.Contains("9 rejection")),"real embedded PowerShell guard and boot matrix pass without device writes");
+    Check(lines.Any(x=>x.Contains("Windows 11 answer file")),"real embedded answer generation, file SHA256, metadata classification and collision guards pass");
     if(args.Length==2&&args[0]=="--inspect")Console.WriteLine((await UsbImages.Inspect(args[1])).Description);
 }
 finally

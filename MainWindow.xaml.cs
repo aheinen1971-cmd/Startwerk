@@ -85,7 +85,7 @@ public partial class MainWindow : Window
     async void ModeChanged(object sender,RoutedEventArgs e)
     {
         if(!IsLoaded||selectingSource)return;
-        ConfigureMode();selectedImage=null;ImagePath.Clear();ImageInfo.Text="Noch keine Quelle ausgewählt.";UpdateBootInfo();await Refresh();
+        ConfigureMode();selectedImage=null;Windows11Compatibility.IsChecked=false;ImagePath.Clear();ImageInfo.Text="Noch keine Quelle ausgewählt.";UpdateBootInfo();await Refresh();
     }
     void ConfigureMode()
     {
@@ -97,17 +97,21 @@ public partial class MainWindow : Window
         GetIsoButton.Content=win?"Windows-ISO von Microsoft holen …":"Aktuelle Linux-ISO holen …";
         TargetHint.Text="Nur USB-Datenträger; System-, Start- und schreibgeschützte Laufwerke sind gesperrt.";
         BootOptions.Visibility=win?Visibility.Visible:Visibility.Collapsed;BootInfo.Visibility=Visibility.Visible;
+        CompatibilityOptions.Visibility=win?Visibility.Visible:Visibility.Collapsed;
     }
+    void CompatibilityChanged(object sender,RoutedEventArgs e){if(IsLoaded)UpdateBootInfo();}
     void BootChanged(object sender,SelectionChangedEventArgs e){if(IsLoaded)UpdateBootInfo();}
     void UpdateBootInfo()
     {
-        try{BootInfo.Text=selectedImage is null?"Das Abbild wird nach der Auswahl schreibgeschützt untersucht. Vor dem Schreiben erscheint eine Zusammenfassung.":UsbPlan.Create(selectedImage,selectedImage.Windows?SelectedBoot:"Image").Description;}
+        Windows11Compatibility.IsEnabled=selectedImage is {Windows:true,Windows11:true,Architecture:"amd64" or "arm64"};
+        if(!Windows11Compatibility.IsEnabled&&Windows11Compatibility.IsChecked==true)Windows11Compatibility.IsChecked=false;
+        try{BootInfo.Text=selectedImage is null?"Das Abbild wird nach der Auswahl schreibgeschützt untersucht. Vor dem Schreiben erscheint eine Zusammenfassung.":UsbPlan.Create(selectedImage,selectedImage.Windows?SelectedBoot:"Image",Windows11Compatibility.IsChecked==true).Description;}
         catch(Exception ex){BootInfo.Text=ex.Message;}
     }
     public async Task SelectImage(string path)
     {
         if(busy)return;
-        SetBusy(true);selectedImage=null;ImagePath.Clear();ImageInfo.Text="Abbild wird schreibgeschützt untersucht …";
+        SetBusy(true);selectedImage=null;Windows11Compatibility.IsChecked=false;Windows11Compatibility.IsEnabled=false;ImagePath.Clear();ImageInfo.Text="Abbild wird schreibgeschützt untersucht …";
         try
         {
             var image=await UsbImages.Inspect(path);
@@ -115,7 +119,7 @@ public partial class MainWindow : Window
             selectingSource=true;
             try{if(image.Windows)WindowsMode.IsChecked=true;else RawMode.IsChecked=true;ConfigureMode();BootChoice.SelectedIndex=image.Efi?0:1;}
             finally{selectingSource=false;}
-            selectedImage=image;ImagePath.Text=image.Path;ImageInfo.Text=$"{image.Bytes/1073741824.0:F2} GiB · {image.Description}";
+            selectedImage=image;ImagePath.Text=image.Path;ImageInfo.Text=$"{image.Bytes/1073741824.0:F2} GiB · {image.Description}"+(image.Windows11?$" · Windows 11 ({image.Architecture})":"");
             Targets.SelectedIndex=-1;UpdateBootInfo();AddLog("Abbild erkannt: "+image.Description);
         }
         catch(Exception ex){ImageInfo.Text="Abbild nicht ausgewählt: "+ex.Message;AddLog(ex.Message);}
@@ -152,7 +156,7 @@ public partial class MainWindow : Window
         {
             var image=await UsbImages.Inspect(path);
             if(image.Windows!=win)throw new IOException("Der Abbildtyp passt nicht mehr zum gewählten Modus. Bitte die Quelle erneut auswählen.");
-            plan=UsbPlan.Create(image,win?SelectedBoot:"Image");
+            plan=UsbPlan.Create(image,win?SelectedBoot:"Image",Windows11Compatibility.IsChecked==true);
             if(image.Bytes>target.Size)throw new IOException("Das Abbild ist größer als der ausgewählte USB-Datenträger.");
         }
         catch(Exception ex){Status.Text="USB-Auftrag nicht gestartet";MessageBox.Show(this,ex.Message,"USB-Auftrag nicht gestartet");return;}
@@ -161,7 +165,7 @@ public partial class MainWindow : Window
         SetBusy(true);
         try
         {
-            AddLog($"Start: {path} → {target.Label}");await Backend.WriteUsb(path,target,win,verify,AddLog,plan.BootMode);
+            AddLog($"Start: {path} → {target.Label}");await Backend.WriteUsb(path,target,win,verify,AddLog,plan.BootMode,plan.Windows11Compatibility);
             Progress.IsIndeterminate=false;Progress.Value=100;Status.Text="Abgeschlossen";
             AddLog(verify?"USB-Stick geschrieben und Datenprüfung erfolgreich.":"USB-Stick geschrieben; Datenprüfung abgewählt.");
             MessageBox.Show(this,"Der USB-Stick wurde erfolgreich erstellt.","Startwerk");

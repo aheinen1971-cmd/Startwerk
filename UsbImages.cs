@@ -2,18 +2,19 @@ using System.IO;
 using System.Text;
 
 namespace Startwerk;
-public sealed record IsoFacts(bool WindowsInstall, bool Efi, bool Bios);
-public sealed record UsbImage(string Path, long Bytes, bool Windows, bool Efi, bool Bios, bool Hybrid, string PartitionTable)
+public sealed record IsoFacts(bool WindowsInstall, bool Efi, bool Bios, bool Windows11=false, string Architecture="");
+public sealed record UsbImage(string Path, long Bytes, bool Windows, bool Efi, bool Bios, bool Hybrid, string PartitionTable, bool Windows11=false, string Architecture="")
 {
     public string Description => Windows
         ? "Windows-Installation · " + (Efi && Bios ? "UEFI und BIOS erkannt" : Efi ? "UEFI erkannt" : Bios ? "BIOS erkannt" : "kein unterstützter Bootloader erkannt")
         : Hybrid ? $"Partitioniertes Abbild ({PartitionTable}) · wird unverändert geschrieben; Bootfähigkeit hängt vom Abbild ab."
         : "Kein unterstütztes USB-Abbild erkannt.";
 }
-public sealed record UsbPlan(UsbImage Image, string BootMode, string Description)
+public sealed record UsbPlan(UsbImage Image, string BootMode, string Description, bool Windows11Compatibility=false)
 {
-    public static UsbPlan Create(UsbImage image, string bootMode)
+    public static UsbPlan Create(UsbImage image, string bootMode, bool windows11Compatibility=false)
     {
+        if(windows11Compatibility&&(!image.Windows||!image.Windows11||image.Architecture is not ("amd64" or "arm64")))throw new IOException("Die Kompatibilitätsoption benötigt eine erkannte Windows-11-Client-ISO für x64 oder ARM64 mit lesbaren WIM-/ESD-Metadaten.");
         if (!image.Windows)
         {
             if (!image.Hybrid) throw new IOException("Dieses Abbild ist weder eine Windows-Installations-ISO noch ein partitioniertes Hybrid-/IMG-Abbild.");
@@ -25,7 +26,8 @@ public sealed record UsbPlan(UsbImage Image, string BootMode, string Description
         if (efi && !image.Efi) throw new IOException("In der Windows-ISO wurde kein UEFI-Bootloader erkannt. Bitte BIOS wählen oder eine passende ISO verwenden.");
         if (bios && !image.Bios) throw new IOException("In der Windows-ISO fehlen die BIOS-Startdateien. Bitte UEFI wählen oder eine passende ISO verwenden.");
         return new(image, bootMode, (bootMode == "UEFI" ? "UEFI · GPT" : bootMode == "BIOS" ? "BIOS / Legacy · MBR" : "BIOS + UEFI · MBR") +
-            " · FAT32\nWindows-Partition bis 31 GiB; übriger Platz bleibt unpartitioniert. Große install.wim wird geteilt. Die Auswahl ändert keine Windows-Hardwareanforderungen.");
+            " · FAT32\nWindows-Partition bis 31 GiB; übriger Platz bleibt unpartitioniert. Große install.wim wird geteilt.\n"+
+            (windows11Compatibility?"Windows-11-Kompatibilität EIN: TPM-, Secure-Boot- und RAM-Prüfungen beim USB-Start überspringen. Fehlende CPU-Befehle und Treiber werden nicht ersetzt; Support und Updates sind nicht garantiert.":"Windows-11-Kompatibilität AUS: Hardwareprüfungen unverändert."),windows11Compatibility);
     }
     public string Summary(Target target, bool verify) =>
         $"Ziel: {target.Label}\nDatenträgernummer: {target.Number}\nSeriennummer: {(string.IsNullOrWhiteSpace(target.Serial) ? "nicht gemeldet" : target.Serial)}\n\n" +
@@ -57,6 +59,6 @@ public static class UsbImages
             try { facts = await (isoReader ?? Backend.InspectIso)(path); }
             catch (IOException) when (hybrid) { /* A raw hybrid image can be written without mounting its filesystem. */ }
         }
-        return new(path, size, facts.WindowsInstall, facts.Efi, facts.Bios, hybrid, table);
+        return new(path, size, facts.WindowsInstall, facts.Efi, facts.Bios, hybrid, table, facts.Windows11, facts.Architecture);
     }
 }
