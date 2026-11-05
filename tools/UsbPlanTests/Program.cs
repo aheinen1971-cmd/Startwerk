@@ -40,6 +40,49 @@ try
     var lines=new List<string>();await Backend.TestEmbeddedUsb(lines.Add);
     Check(lines.Any(x=>x.Contains("16 Windows boot"))&&lines.Any(x=>x.Contains("9 rejection")),"real embedded PowerShell guard and boot matrix pass without device writes");
     Check(lines.Any(x=>x.Contains("Windows 11 answer file")),"real embedded answer generation, file SHA256, metadata classification and collision guards pass");
+    Check(lines.Any(x=>x.Contains("altered readback rejected")), "capacity scan rejects tampered data and reads the final short block");
+    // Independent 7-Zip CRC64 fixture with an 8192-byte partitioned image.
+    var compressed = Convert.FromBase64String("/Td6WFoAAATm1rRGAgAhAQIAAAC875584B//ADddAABv/fyfL0YDl81/3shI4WG8z6zf/GCAG9hLHzXgmXPqNgB4Ny/X7uluCAQPAp+3cGUQho1lQgAAAKNUj9yAqdRsAAFTgEAAAAArRr1jscRn+wIAAAAABFla");
+    string archive = Path.Combine(root, "sample.img.xz");
+    File.WriteAllBytes(archive, compressed);
+    const string expected = "D91400AA7143A8CA1D2A51C90055305D413659570CAEE80A6B65C6E9B55C6CFF";
+    string expandedPath;
+    using (var expanded = await CompressedImage.Expand(archive))
+    {
+        expandedPath = expanded.Path;
+        var (digest, match) = await Backend.CheckFileHash(expanded.Path, expected.ToLowerInvariant());
+        Check(digest == expected && match == true && (await UsbImages.Inspect(expanded.Path)).Hybrid, "CRC64 compressed IMG expands to the expected partitioned bytes and matches SHA-256");
+        Check((await Backend.CheckFileHash(expanded.Path, new string('0',64))).Matches == false, "wrong SHA-256 detected");
+        Check((await Backend.CheckFileHash(expanded.Path, "")).Matches is null, "file hash can be calculated without a reference");
+    }
+    Check(!File.Exists(expandedPath), "temporary expanded image removed when released");
+    // The same IMG encoded independently by liblzma with the two other XZ check types.
+    foreach (var (encoded, name) in new[]
+    {
+        ("/Td6WFoAAAFpIt42AgAhARYAAAB0L+Wj4B//ADVdAABv/fyfL0YDmhOiBcICPUWFbDVFKNlxXZ2XiQn2MUzb05Hd91ECBmzXa7dTh/FRNHE5eHx4AAAAADE9+BkAAU2AQAAAAMAlYVo+MA2LAgAAAAABWVo=", "CRC32"),
+        ("/Td6WFoAAArh+wyhAgAhARYAAAB0L+Wj4B//ADVdAABv/fyfL0YDmhOiBcICPUWFbDVFKNlxXZ2XiQn2MUzb05Hd91ECBmzXa7dTh/FRNHE5eHx4AAAAANkUAKpxQ6jKHSpRyQBVMF1BNllXDK7oCmtlxum1XGz/AAFpgEAAAADgYlzGtunfHAIAAAAAClla", "SHA-256")
+    })
+    {
+        File.WriteAllBytes(archive, Convert.FromBase64String(encoded).Concat(new byte[4]).ToArray());
+        using var expanded = await CompressedImage.Expand(archive);
+        Check((await Backend.CheckFileHash(expanded.Path, expected)).Matches == true, name + " compressed IMG with valid stream padding");
+    }
+    byte[] corrupt = (byte[])compressed.Clone();
+    corrupt[50] ^= 1;
+    byte[] badCrc = (byte[])compressed.Clone();
+    badCrc[88] ^= 1;
+    byte[] badFooter = (byte[])compressed.Clone();
+    badFooter[^12] ^= 1;
+    byte[] badIndex = (byte[])compressed.Clone();
+    badIndex[^13] ^= 1;
+    foreach (var (data, name) in new[] { (corrupt, "corrupted XZ payload"), (badCrc, "wrong XZ block CRC64"), (badIndex, "invalid XZ index"), (badFooter, "invalid XZ footer"), (compressed[..^8], "truncated XZ"), (compressed.Concat(compressed).ToArray(), "concatenated XZ") })
+    {
+        File.WriteAllBytes(archive, data);
+        bool rejected = false;
+        try { using var invalid = await CompressedImage.Expand(archive); }
+        catch (Exception ex) when (ex is IOException or SharpCompress.Common.ArchiveException or ArgumentException) { rejected = true; }
+        Check(rejected, name + " rejected");
+    }
     if(args.Length==2&&args[0]=="--inspect")Console.WriteLine((await UsbImages.Inspect(args[1])).Description);
 }
 finally

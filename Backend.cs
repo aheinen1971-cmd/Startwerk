@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -27,10 +28,21 @@ public static class Backend
         var stderr = process.StandardError.ReadToEndAsync(); string result = process.StandardOutput.ReadToEnd(); process.WaitForExit();
         if (process.ExitCode != 0) throw new IOException(stderr.GetAwaiter().GetResult()); return result;
     }
-    public static Task WriteUsb(string path, Target target, bool windows, bool verify, Action<string> log, string bootMode = "UEFI", bool windows11Compatibility=false)
+    public static Task WriteUsb(string path, Target target, bool windows, bool verify, Action<string> log, string bootMode = "UEFI", bool windows11Compatibility=false, string? sourceOrigin=null)
     {
         if(windows11Compatibility&&!windows)throw new IOException("Windows-11-Kompatibilität ist nur im Windows-USB-Modus verfügbar.");
-        return RunEmbeddedUsb(false, new { Path = path, target.Number, target.UniqueId, target.Size, target.Serial, Windows = windows, Verify = verify, BootMode = windows ? bootMode : "Image", Windows11Compatibility=windows11Compatibility }, log);
+        return RunEmbeddedUsb(false, new { Path = path, SourceOrigin=sourceOrigin, target.Number, target.UniqueId, target.Size, target.Serial, Windows = windows, Verify = verify, BootMode = windows ? bootMode : "Image", Windows11Compatibility=windows11Compatibility }, log);
+    }
+    public static Task ManageUsb(Target target, bool test, Action<string> log)
+        => RunEmbeddedUsb(false, new { target.Number, target.UniqueId, target.Size, target.Serial, DeviceAction=test?"Test":"Restore" }, log);
+    public static async Task<(string Digest, bool? Matches)> CheckFileHash(string path, string expected)
+    {
+        expected = expected.Trim();
+        if (expected.Length != 0 && (expected.Length != 64 || !expected.All(Uri.IsHexDigit)))
+            throw new ArgumentException("SHA-256 muss aus genau 64 Hexadezimalzeichen bestehen.", nameof(expected));
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        string digest = Convert.ToHexString(await SHA256.HashDataAsync(stream).ConfigureAwait(false));
+        return (digest, expected.Length == 0 ? null : digest.Equals(expected, StringComparison.OrdinalIgnoreCase));
     }
     public static async Task<IsoFacts> InspectIso(string path)
     {

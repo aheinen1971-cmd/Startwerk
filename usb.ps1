@@ -153,6 +153,54 @@ public static class StartwerkNative {
   } catch { foreach(var h in handles) h.Dispose(); throw; }
  }
  public static void CheckAvailable(string[] volumes) { var handles=Lock(volumes); foreach(var h in handles) h.Dispose(); }
+ public static void TestCapacity(Stream disk, long capacity, int sector, Action<string> log) {
+  const int blockSize=4*1024*1024;
+  if((sector!=512 && sector!=4096) || capacity<=0 || capacity%sector!=0) throw new IOException("Ungueltige Datentraegergroesse oder Sektorgroesse.");
+  var buffer=new byte[blockSize];
+  var expected=new List<byte[]>();
+  using(var random=RandomNumberGenerator.Create())
+  using(var hash=SHA256.Create()) {
+   disk.Position=0;
+   int last=-1;
+   for(long offset=0;offset<capacity;offset+=blockSize) {
+    int count=(int)Math.Min(blockSize,capacity-offset);
+    random.GetBytes(buffer);
+    expected.Add(hash.ComputeHash(buffer,0,count));
+    disk.Write(buffer,0,count);
+    int percent=(int)((offset+count)*100/capacity);
+    if(percent/5!=last) { log("Testdaten schreiben: "+percent+" %");last=percent/5; }
+   }
+   var file=disk as FileStream;
+   if(file!=null) file.Flush(true); else disk.Flush();
+   log("Testdaten werden zurueckgelesen ...");
+   disk.Position=0;
+   last=-1;
+   int index=0;
+   for(long offset=0;offset<capacity;offset+=blockSize,index++) {
+    int count=(int)Math.Min(blockSize,capacity-offset);
+    int received=0;
+    while(received<count) {
+     int read=disk.Read(buffer,received,count-received);
+     if(read==0) throw new EndOfStreamException("Datentraeger endet vor der angegebenen Kapazitaet.");
+     received+=read;
+    }
+    byte[] actual=hash.ComputeHash(buffer,0,count);
+    for(int n=0;n<actual.Length;n++) {
+     if(actual[n]!=expected[index][n]) throw new IOException("Datenfehler ab Byte "+offset+". Moegliche falsche Kapazitaet oder defekter Speicher.");
+    }
+    int percent=(int)((offset+count)*100/capacity);
+    if(percent/5!=last) { log("Testdaten pruefen: "+percent+" %");last=percent/5; }
+   }
+  }
+ }
+ public static void TestUsb(int number, long capacity, int sector, string[] volumes) {
+  var handles=Lock(volumes);
+  try {
+   // A buffered read can extend past the last physical sector on the final short block.
+   using(var disk=new FileStream(@"\\.\PhysicalDrive"+number,FileMode.Open,FileAccess.ReadWrite,FileShare.ReadWrite,1,FileOptions.WriteThrough))
+    TestCapacity(disk,capacity,sector,Console.WriteLine);
+  } finally { foreach(var handle in handles) handle.Dispose(); }
+ }
  public static void ValidateImage(string path, long capacity, int sector) {
   if(sector!=512 && sector!=4096) throw new IOException("Nicht unterstuetzte Sektorgroesse.");
   using(var src=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read)) {
@@ -168,7 +216,7 @@ public static class StartwerkNative {
   using(var src=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read)) {
    var handles=Lock(volumes);
    try {
-    using(var disk=new FileStream(@"\\.\PhysicalDrive"+number,FileMode.Open,FileAccess.ReadWrite,FileShare.ReadWrite,1048576,FileOptions.WriteThrough)) {
+    using(var disk=new FileStream(@"\\.\PhysicalDrive"+number,FileMode.Open,FileAccess.ReadWrite,FileShare.ReadWrite,1,FileOptions.WriteThrough)) {
      var b=new byte[4*1024*1024]; long remaining=src.Length; long done=0; int last=-1;
      while(remaining>0) {
       int n=(int)Math.Min(b.Length,remaining); int got=0;
@@ -267,6 +315,27 @@ if ($SelfTest) {
         if ($final -notmatch '^\\\\\?\\[A-Za-z]:\\') { throw "Ungueltige Pfadaufloesung: $final" }
     } finally { Remove-Item -LiteralPath $testFile -ErrorAction SilentlyContinue }
     Write-Output 'PASS: USB guard (9 rejection cases), image validation (4 cases), final source path. No device writes.'
+    $memory=New-Object IO.MemoryStream
+    try {
+        [StartwerkNative]::TestCapacity($memory,(4MB+512),512,[Action[string]]{param($message)})
+        $rejected=$false
+        try {
+            [StartwerkNative]::TestCapacity($memory,(4MB+512),512,[Action[string]]{
+                param($message)
+                if ($message.StartsWith('Testdaten werden')) {
+                    $memory.Position=0
+                    $first=$memory.ReadByte()
+                    $memory.Position=0
+                    $memory.WriteByte([byte]($first -bxor 255))
+                }
+            })
+        } catch {
+            if ($_.Exception.ToString() -notmatch 'Datenfehler ab Byte 0') { throw }
+            $rejected=$true
+        }
+        if (!$rejected) { throw 'Kapazitaetstest hat eine manipulierte Testdatei akzeptiert.' }
+    } finally { $memory.Dispose() }
+    Write-Output 'PASS: full-capacity pattern with partial last block; altered readback rejected. No device writes.'
     exit 0
 }
 
@@ -287,11 +356,35 @@ try {
     }
     if ($request.Windows11Compatibility -and -not $request.Windows) { throw 'Kompatibilitaet ist nur im Windows-USB-Modus moeglich.' }
     $disk = Get-CheckedDisk $request
-    $imagePath = [IO.Path]::GetFullPath([string]$request.Path)
-    Assert-LocalSource $imagePath $disk.Number
     $applicationSource = if ($ApplicationPath) { $ApplicationPath } else { $PSCommandPath }
     if ([string]::IsNullOrWhiteSpace($applicationSource)) { throw 'Anwendungspfad fehlt.' }
     Assert-LocalSource $applicationSource $disk.Number
+    if ($request.DeviceAction) {
+        if ($request.DeviceAction -notin @('Restore','Test')) { throw 'Unbekannte USB-Aktion.' }
+        $volumes=[string[]]@(Get-Volumes $disk.Number)
+        $disk=Get-CheckedDisk $request
+        if ($request.DeviceAction -eq 'Test') {
+            [StartwerkNative]::TestUsb($disk.Number,[long]$disk.Size,[int]$disk.LogicalSectorSize,$volumes)
+            Update-HostStorageCache
+            Write-Output 'Kapazitaetstest bestanden. Mit Stick wiederherstellen kann der Datenspeicher eingerichtet werden.'
+        } else {
+            [StartwerkNative]::CheckAvailable($volumes)
+            $disk=Get-CheckedDisk $request
+            if ($disk.PartitionStyle -ne 'RAW') { $disk | Clear-Disk -RemoveData -RemoveOEM -Confirm:$false }
+            $disk=Get-CheckedDisk $request
+            if ($disk.PartitionStyle -ne 'RAW') { throw 'USB-Datentraeger wurde nicht vollstaendig geleert.' }
+            $disk | Initialize-Disk -PartitionStyle GPT | Out-Null
+            $disk=Get-CheckedDisk $request
+            $partition=New-Partition -DiskNumber $disk.Number -UseMaximumSize -AssignDriveLetter
+            $volume=$partition | Format-Volume -FileSystem exFAT -NewFileSystemLabel 'USB' -Force -Confirm:$false
+            if (!$volume.DriveLetter -or $volume.FileSystem -ine 'exFAT' -or $partition.Size -lt $disk.Size - 32MB) { throw 'Datenspeicher konnte nicht vollstaendig eingerichtet werden.' }
+            Write-Output "Datenspeicher wiederhergestellt: $($volume.DriveLetter):, exFAT, $([Math]::Round($volume.Size/1GB,2)) GiB."
+        }
+        exit 0
+    }
+    $imagePath = [IO.Path]::GetFullPath([string]$request.Path)
+    Assert-LocalSource $imagePath $disk.Number
+    if ($request.SourceOrigin) { Assert-LocalSource ([IO.Path]::GetFullPath([string]$request.SourceOrigin)) $disk.Number }
     # Keep source immutable throughout all preflight checks and writes.
     $sourceLock = [IO.File]::Open($imagePath, 'Open', 'Read', 'Read')
     if ($sourceLock.Length -eq 0) { throw 'Das Abbild ist leer.' }

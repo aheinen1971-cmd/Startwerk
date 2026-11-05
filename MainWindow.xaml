@@ -23,10 +23,17 @@
     <TextBlock Text="01   QUELLE AUSWÄHLEN" Foreground="#6EE7C2" FontWeight="Bold" Margin="0,0,0,9"/>
     <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox x:Name="ImagePath" IsReadOnly="True" VerticalContentAlignment="Center"/><Button x:Name="BrowseButton" Grid.Column="1" Content="Datei wählen …" Click="Browse" Margin="12,0,0,0"/></Grid>
     <TextBlock x:Name="ImageInfo" Text="Noch keine Quelle ausgewählt." Foreground="#9DAEC5" Margin="0,8,0,20"/>
-    <Button x:Name="GetIsoButton" Content="Original-ISO herunterladen …" Click="GetIso" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,0,0,18"/>
+    <WrapPanel Margin="0,0,0,18">
+     <Button x:Name="GetIsoButton" Content="Original-ISO herunterladen …" Click="GetIso" Visibility="Collapsed"/>
+     <Button x:Name="ChecksumButton" Content="Datei-Prüfsumme …" Click="CheckImageHash"/>
+    </WrapPanel>
     <TextBlock Text="02   ZIEL AUSWÄHLEN" Foreground="#6EE7C2" FontWeight="Bold" Margin="0,0,0,9"/>
     <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><ComboBox x:Name="Targets" DisplayMemberPath="Label"/><Button Grid.Column="1" Content="Aktualisieren" Click="RefreshClick" Margin="12,0,0,0"/></Grid>
     <TextBlock x:Name="TargetHint" Foreground="#9DAEC5" Margin="0,8,0,16" Text="USB-Stick anschließen und das passende Ziel auswählen."/>
+    <WrapPanel Margin="0,0,0,16">
+     <Button x:Name="RestoreButton" Content="Stick wiederherstellen …" Tag="Restore" Click="ManageStick"/>
+     <Button x:Name="CapacityButton" Content="Stick auf Fehler prüfen …" Tag="Test" Click="ManageStick"/>
+    </WrapPanel>
     <StackPanel x:Name="BootOptions" Visibility="Collapsed" Margin="0,0,0,12">
      <TextBlock Text="03   BOOT-VERFAHREN" Foreground="#6EE7C2" FontWeight="Bold" Margin="0,0,0,8"/>
      <ComboBox x:Name="BootChoice" SelectedIndex="0" SelectionChanged="BootChanged">

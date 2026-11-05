@@ -4,21 +4,23 @@ Startwerk ist die eigenständige USB-Version von Brennwerk. Der bisherige Brennw
 
 - Windows-Installations-USB: UEFI, BIOS oder BIOS + UEFI, soweit das gewählte Windows-Abbild dies unterstützt.
 - Große `install.esd`-Dateien werden mit allen Editionen vor dem Löschen des Sticks exportiert und als FAT32-kompatible `install.swm`-Teile geschrieben. Dafür braucht Startwerk vorübergehend zusätzlichen freien Speicher auf dem Windows-PC.
-- Linux-Hybrid-ISO und bootfähige IMG-Dateien unverändert auf USB schreiben.
+- Linux-Hybrid-ISO und bootfähige IMG-Dateien unverändert auf USB schreiben. `IMG.XZ` kann direkt gewählt werden. Startwerk entpackt und prüft das Abbild auf dem PC, bevor ein Stick beschrieben wird.
 - Windows-Downloadassistent mit offizieller Microsoft-Seite als Alternative.
 - Linux-Katalog einschließlich Linux Mint und geprüfter alternativer Downloadseiten.
 - Anbieter-Prüfsummen bei unterstützten direkten ISO-Downloads; Datenprüfung nach dem USB-Schreiben standardmäßig eingeschaltet.
+- Datei-Prüfsumme berechnet SHA-256 für vorhandene Dateien und vergleicht auf Wunsch mit dem Wert des Anbieters.
+- Stick prüfen beschreibt die gesamte gemeldete Kapazität mit Testdaten und vergleicht sie beim Zurücklesen. Stick wiederherstellen richtet den USB-Stick als exFAT-Datenspeicher ein. Beide Vorgänge löschen die Daten auf dem gewählten Stick.
 - Sicherheitsprüfung des USB-Ziels und Eingabe der genauen Datenträgernummer vor dem Löschen.
 - Webseitenprüfung alle sechs Stunden, solange Startwerk geöffnet ist; überfällige Prüfung beim nächsten Start.
 - Eigener signierter GitHub-Updatekanal und eigene Einstellungen unter `%LOCALAPPDATA%\Startwerk`.
 
 Die einzelne `Startwerk.exe` enthält das USB-Modul. Eine zusätzliche `usb.ps1` ist nicht nötig. Der Windows-Downloadassistent benötigt die Microsoft Edge WebView2 Runtime.
 
-Startwerk enthält keine Disc-Brenn-, Disc-Lese-, Medienexport- oder Daten-ISO-Erstellungsfunktionen. Raspberry-Pi-Abbilder sind für Raspberry Pi bestimmt; IMG.XZ vor dem Schreiben entpacken.
+Startwerk enthält keine Disc-Brenn-, Disc-Lese-, Medienexport- oder Daten-ISO-Erstellungsfunktionen. Raspberry-Pi-Abbilder sind für Raspberry Pi bestimmt. Für `IMG.XZ` braucht Startwerk freien Platz für das vollständige entpackte Abbild (bis 64 GiB) und unterstützt einen XZ-Datenstrom mit CRC32, CRC64 oder SHA-256.
 
 Die Alternativquellen für MX, Lubuntu und Raspberry Pi öffnen Downloadseiten im Browser. Die automatische aktuelle ISO-Auswahl samt Prüfsumme unterstützt Ubuntu, Debian, Fedora sowie Linux Mint Cinnamon, MATE und Xfce.
 
-Die automatischen Tests schreiben keine echten USB-Sticks. Ein realer Schreib- und Bootversuch auf Hardware bleibt gesondert zu prüfen.
+Die automatischen Tests schreiben keine echten USB-Sticks. Mit Version 0.3.0 wurde ein Windows-USB-Abbild in einer UEFI-VM mit aktivem Secure Boot bis zum Windows-Setup gestartet. Ob es auf einem bestimmten Rechner startet, hängt auch von den Schlüsseln und Sperrlisten seiner Firmware und den Startdateien des Abbilds ab.
 
 ## Bauen
 

@@ -13,8 +13,8 @@ public static class LinuxCatalog
         new("MX:mirror","MX","MX · offizieller Spiegelserver","https://rsync-mxlinux.org/MX/Final/","https://mxlinux.org/wiki/system/iso-download-mirrors/","Ausgabe auswählen und deren SHA-256-/Signaturdatei mit herunterladen."),
         new("MX:sourceforge","MX","MX · SourceForge-Projekt","https://sourceforge.net/projects/mx-linux/files/Final/","https://mxlinux.org/wiki/system/iso-download-mirrors/","Nur das MX-Linux-Projekt ist freigegeben; Ausgabe und Prüfsumme auf der Seite wählen."),
         new("Lubuntu:ubuntu","Lubuntu","Lubuntu · Ubuntu-CD-Server","https://cdimage.ubuntu.com/lubuntu/releases/","https://help.ubuntu.com/community/UbuntuHashes","Version und release-Ordner wählen; SHA256SUMS zur passenden ISO verwenden."),
-        new("Raspberry:arm64","Raspberry","Raspberry Pi OS · 64-Bit-Archiv","https://downloads.raspberrypi.com/raspios_arm64/images/","https://www.raspberrypi.com/software/operating-systems/","Abbild für Raspberry Pi, nicht für normale Intel-/AMD-PCs. IMG.XZ zuerst entpacken; Prüfsumme bezieht sich auf die heruntergeladene Datei."),
-        new("Raspberry:armhf","Raspberry","Raspberry Pi OS · 32-Bit-Archiv","https://downloads.raspberrypi.com/raspios_armhf/images/","https://www.raspberrypi.com/software/operating-systems/","Abbild für Raspberry Pi. Passende Version und Prüfsumme wählen; IMG.XZ vor dem USB-Schreiben entpacken.")
+        new("Raspberry:arm64","Raspberry","Raspberry Pi OS · 64-Bit-Archiv","https://downloads.raspberrypi.com/raspios_arm64/images/","https://www.raspberrypi.com/software/operating-systems/","Abbild für Raspberry Pi. IMG.XZ direkt in Startwerk auswählen; die Anbieter-Prüfsumme gilt für die heruntergeladene Datei."),
+        new("Raspberry:armhf","Raspberry","Raspberry Pi OS · 32-Bit-Archiv","https://downloads.raspberrypi.com/raspios_armhf/images/","https://www.raspberrypi.com/software/operating-systems/","Abbild für Raspberry Pi. Passende Version wählen und IMG.XZ in Startwerk öffnen. Die Anbieter-Prüfsumme gilt für das Archiv.")
     ]);
     public static bool Matches(LinuxAlternative entry,Uri uri)
     {

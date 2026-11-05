@@ -9,6 +9,7 @@ public partial class MainWindow : Window
     bool busy;
     bool selectingSource;
     UsbImage? selectedImage;
+    CompressedImage? preparedImage;
     string SelectedBoot => (BootChoice.SelectedItem as ComboBoxItem)?.Tag as string ?? "UEFI";
     public bool InstallingUpdate {get;private set;}
     PreparedUpdate? pendingUpdate;
@@ -79,19 +80,20 @@ public partial class MainWindow : Window
         updateTimer.Tick+=(_,_)=>{try{if(pendingUpdate!=null&&CanAutoInstall())InstallPreparedUpdate(pendingUpdate);}catch(Exception ex){updateTimer.Stop();AddLog("Update: "+ex.Message);}};
         websiteTimer.Tick+=async(_,_)=>await CheckWebsites();
         Loaded+=async(_,_)=>{await Refresh();if(!Environment.GetCommandLineArgs().Contains("--preview")){websiteTimer.Start();_=CheckWebsites();await CheckUpdatesOnStartup();}};
-        Closed+=(_,_)=>{updateTimer.Stop();websiteTimer.Stop();WebsiteMonitor.Cancel();};
+        Closed+=(_,_)=>{updateTimer.Stop();websiteTimer.Stop();WebsiteMonitor.Cancel();ReleasePreparedImage();};
     }
     void AddLog(string text)=>Dispatcher.Invoke(()=>{Log.AppendText($"{DateTime.Now:HH:mm:ss}  {text}{Environment.NewLine}");Log.ScrollToEnd();});
     async void ModeChanged(object sender,RoutedEventArgs e)
     {
         if(!IsLoaded||selectingSource)return;
+        ReleasePreparedImage();
         ConfigureMode();selectedImage=null;Windows11Compatibility.IsChecked=false;ImagePath.Clear();ImageInfo.Text="Noch keine Quelle ausgewählt.";UpdateBootInfo();await Refresh();
     }
     void ConfigureMode()
     {
         bool win=WindowsMode.IsChecked==true;
         Heading.Text=win?"Windows-USB erstellen":"Linux / IMG auf USB schreiben";
-        ModeHint.Text=win?"Windows-ISO auswählen oder herunterladen und das Boot-Verfahren passend zum PC wählen.":"Hybrid-ISO oder bootfähiges IMG unverändert auf USB schreiben. Der Abbildtyp wird automatisch geprüft.";
+        ModeHint.Text=win?"Windows-ISO auswählen oder herunterladen und das Boot-Verfahren passend zum PC wählen.":"Hybrid-ISO oder bootfähiges IMG auf USB schreiben. IMG.XZ wird vor dem Schreiben entpackt.";
         Notice.Text="Alle Partitionen und Dateien des USB-Ziels werden gelöscht. Vor dem Start Modell, Größe und Datenträgernummer prüfen.";
         Verify.Visibility=Visibility.Visible;GetIsoButton.Visibility=Visibility.Visible;
         GetIsoButton.Content=win?"Windows-ISO von Microsoft holen …":"Aktuelle Linux-ISO holen …";
@@ -111,23 +113,35 @@ public partial class MainWindow : Window
     public async Task SelectImage(string path)
     {
         if(busy)return;
+        ReleasePreparedImage();
         SetBusy(true);selectedImage=null;Windows11Compatibility.IsChecked=false;Windows11Compatibility.IsEnabled=false;ImagePath.Clear();ImageInfo.Text="Abbild wird schreibgeschützt untersucht …";
         try
         {
-            var image=await UsbImages.Inspect(path);
+            path=Path.GetFullPath(path);
+            if(path.EndsWith(".img.xz",StringComparison.OrdinalIgnoreCase))
+            {
+                ImageInfo.Text="IMG.XZ wird entpackt und geprüft …";
+                preparedImage=await Task.Run(()=>CompressedImage.Expand(path));
+            }
+            var image=(await UsbImages.Inspect(preparedImage?.Path??path)) with { Path=path };
             if(!image.Windows&&!image.Hybrid)throw new IOException(image.Description);
             selectingSource=true;
             try{if(image.Windows)WindowsMode.IsChecked=true;else RawMode.IsChecked=true;ConfigureMode();BootChoice.SelectedIndex=image.Efi?0:1;}
             finally{selectingSource=false;}
-            selectedImage=image;ImagePath.Text=image.Path;ImageInfo.Text=$"{image.Bytes/1073741824.0:F2} GiB · {image.Description}"+(image.Windows11?$" · Windows 11 ({image.Architecture})":"");
+            selectedImage=image;ImagePath.Text=image.Path;ImageInfo.Text=$"{image.Bytes/1073741824.0:F2} GiB"+(preparedImage is null?"":" entpackt")+$" · {image.Description}"+(image.Windows11?$" · Windows 11 ({image.Architecture})":"");
             Targets.SelectedIndex=-1;UpdateBootInfo();AddLog("Abbild erkannt: "+image.Description);
         }
-        catch(Exception ex){ImageInfo.Text="Abbild nicht ausgewählt: "+ex.Message;AddLog(ex.Message);}
+        catch(Exception ex){ReleasePreparedImage();ImageInfo.Text="Abbild nicht ausgewählt: "+ex.Message;AddLog(ex.Message);}
         finally{SetBusy(false);Progress.IsIndeterminate=false;Status.Text="Bitte Ziel auswählen";UpdateBootInfo();}
+    }
+    void ReleasePreparedImage()
+    {
+        preparedImage?.Dispose();
+        preparedImage=null;
     }
     async void Browse(object sender,RoutedEventArgs e)
     {
-        var dialog=new OpenFileDialog{Filter="Abbilder (*.iso;*.img)|*.iso;*.img",CheckFileExists=true};
+        var dialog=new OpenFileDialog{Filter="Abbilder (*.iso;*.img;*.img.xz)|*.iso;*.img;*.img.xz",CheckFileExists=true};
         if(dialog.ShowDialog()==true)await SelectImage(dialog.FileName);
     }
     async void RefreshClick(object sender,RoutedEventArgs e)=>await Refresh();
@@ -148,24 +162,25 @@ public partial class MainWindow : Window
     {
         if(busy)return;
         bool win=WindowsMode.IsChecked==true,verify=Verify.IsChecked==true;string path=ImagePath.Text;
+        string writePath=preparedImage?.Path??path;
         if(!File.Exists(path)){MessageBox.Show(this,"Bitte zuerst eine gültige ISO- oder IMG-Datei auswählen.");return;}
         if(Targets.SelectedItem is not Target target){MessageBox.Show(this,"Bitte einen USB-Stick auswählen.");return;}
         UsbPlan plan;
         SetBusy(true);
         try
         {
-            var image=await UsbImages.Inspect(path);
+            var image=(await UsbImages.Inspect(writePath)) with { Path=path };
             if(image.Windows!=win)throw new IOException("Der Abbildtyp passt nicht mehr zum gewählten Modus. Bitte die Quelle erneut auswählen.");
             plan=UsbPlan.Create(image,win?SelectedBoot:"Image",Windows11Compatibility.IsChecked==true);
             if(image.Bytes>target.Size)throw new IOException("Das Abbild ist größer als der ausgewählte USB-Datenträger.");
         }
         catch(Exception ex){Status.Text="USB-Auftrag nicht gestartet";MessageBox.Show(this,ex.Message,"USB-Auftrag nicht gestartet");return;}
         finally{SetBusy(false);Progress.IsIndeterminate=false;}
-        if(!ConfirmUsb(target,plan,verify))return;
+        if(!ConfirmUsb(target,plan.Summary(target,verify),"Löschen und schreiben"))return;
         SetBusy(true);
         try
         {
-            AddLog($"Start: {path} → {target.Label}");await Backend.WriteUsb(path,target,win,verify,AddLog,plan.BootMode,plan.Windows11Compatibility);
+            AddLog($"Start: {path} → {target.Label}");await Backend.WriteUsb(writePath,target,win,verify,AddLog,plan.BootMode,plan.Windows11Compatibility,preparedImage is null?null:path);
             Progress.IsIndeterminate=false;Progress.Value=100;Status.Text="Abgeschlossen";
             AddLog(verify?"USB-Stick geschrieben und Datenprüfung erfolgreich.":"USB-Stick geschrieben; Datenprüfung abgewählt.");
             MessageBox.Show(this,"Der USB-Stick wurde erfolgreich erstellt.","Startwerk");
@@ -174,19 +189,19 @@ public partial class MainWindow : Window
         finally{SetBusy(false);}
     }
 
-    bool ConfirmUsb(Target target, UsbPlan plan, bool verify)
+    bool ConfirmUsb(Target target, string summary, string action)
     {
         var dialog = new Window { Owner = this, Title = "USB-Auftrag prüfen und Ziel löschen", Width = 650, SizeToContent=SizeToContent.Height, MaxHeight=700, ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner, Background = System.Windows.Media.Brushes.White };
         var panel = new StackPanel { Margin = new Thickness(24) };
-        panel.Children.Add(new TextBlock { Text = plan.Summary(target,verify)+$"\n\nZum Bestätigen eingeben: LÖSCHEN {target.Number}", TextWrapping = TextWrapping.Wrap, Foreground = System.Windows.Media.Brushes.Black });
+        panel.Children.Add(new TextBlock { Text = summary+$"\n\nZum Bestätigen eingeben: LÖSCHEN {target.Number}", TextWrapping = TextWrapping.Wrap, Foreground = System.Windows.Media.Brushes.Black });
         var input = new TextBox { Margin = new Thickness(0, 16, 0, 16) }; panel.Children.Add(input);
-        var button = new Button { Content = "Löschen und schreiben", IsEnabled = false };
+        var button = new Button { Content = action, IsEnabled = false };
         input.TextChanged += (_, _) => button.IsEnabled = input.Text == $"LÖSCHEN {target.Number}";
         button.Click += (_, _) => dialog.DialogResult = true; panel.Children.Add(button);
         dialog.Content = new ScrollViewer {Content=panel,VerticalScrollBarVisibility=ScrollBarVisibility.Auto}; return dialog.ShowDialog() == true;
     }
     void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
-        if (busy&&!InstallingUpdate) { e.Cancel = true; MessageBox.Show(this, "Bitte warte, bis der Schreibvorgang beendet ist.", "Vorgang läuft"); }
+        if (busy&&!InstallingUpdate) { e.Cancel = true; MessageBox.Show(this, "Bitte warte, bis der Vorgang beendet ist.", "Vorgang läuft"); }
     }
 }
