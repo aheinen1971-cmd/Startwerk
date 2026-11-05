@@ -26,7 +26,7 @@ public sealed record UsbPlan(UsbImage Image, string BootMode, string Description
         if (efi && !image.Efi) throw new IOException("In der Windows-ISO wurde kein UEFI-Bootloader erkannt. Bitte BIOS wählen oder eine passende ISO verwenden.");
         if (bios && !image.Bios) throw new IOException("In der Windows-ISO fehlen die BIOS-Startdateien. Bitte UEFI wählen oder eine passende ISO verwenden.");
         return new(image, bootMode, (bootMode == "UEFI" ? "UEFI · GPT" : bootMode == "BIOS" ? "BIOS / Legacy · MBR" : "BIOS + UEFI · MBR") +
-            " · FAT32\nWindows-Partition bis 31 GiB; übriger Platz bleibt unpartitioniert. Große install.wim wird geteilt.\n"+
+            " · FAT32\nWindows-Partition bis 31 GiB; übriger Platz bleibt unpartitioniert. Große install.wim und install.esd werden vor dem Löschen aufgeteilt.\n"+
             (windows11Compatibility?"Windows-11-Kompatibilität EIN: TPM-, Secure-Boot- und RAM-Prüfungen beim USB-Start überspringen. Fehlende CPU-Befehle und Treiber werden nicht ersetzt; Support und Updates sind nicht garantiert.":"Windows-11-Kompatibilität AUS: Hardwareprüfungen unverändert."),windows11Compatibility);
     }
     public string Summary(Target target, bool verify) =>

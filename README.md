@@ -3,6 +3,7 @@
 Startwerk ist die eigenständige USB-Version von Brennwerk. Der bisherige Brennwerk-Stand bleibt separat als Sicherung erhalten.
 
 - Windows-Installations-USB: UEFI, BIOS oder BIOS + UEFI, soweit das gewählte Windows-Abbild dies unterstützt.
+- Große `install.esd`-Dateien werden mit allen Editionen vor dem Löschen des Sticks exportiert und als FAT32-kompatible `install.swm`-Teile geschrieben. Dafür braucht Startwerk vorübergehend zusätzlichen freien Speicher auf dem Windows-PC.
 - Linux-Hybrid-ISO und bootfähige IMG-Dateien unverändert auf USB schreiben.
 - Windows-Downloadassistent mit offizieller Microsoft-Seite als Alternative.
 - Linux-Katalog einschließlich Linux Mint und geprüfter alternativer Downloadseiten.

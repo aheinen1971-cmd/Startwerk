@@ -20,7 +20,7 @@ function Get-CheckedDisk($Request) {
     return $disk
 }
 function Get-Volumes($DiskNumber) {
-    return @(Get-Partition -DiskNumber $DiskNumber | ForEach-Object { $_.AccessPaths } | Where-Object { $_ -match '^\\\\\?\\Volume\{' } | Select-Object -Unique)
+    return @(Get-Partition | Where-Object DiskNumber -eq $DiskNumber | ForEach-Object { $_.AccessPaths } | Where-Object { $_ -match '^\\\\\?\\Volume\{' } | Select-Object -Unique)
 }
 function Get-CompatibilityFacts($Info) {
     $architecture=switch ([int]$Info.Architecture) { 9 {'amd64'} 12 {'arm64'} default {''} }
@@ -79,6 +79,36 @@ function Write-CompatibilityAnswer($Destination,[string]$Xml) {
     $sha=[Security.Cryptography.SHA256]::Create()
     try { $expected=[BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','') } finally { $sha.Dispose() }
     if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -cne $expected) { throw 'Antwortdatei-Pruefsumme stimmt nicht ueberein.' }
+}
+function Split-WindowsInstallImage([IO.FileInfo]$InstallFile,[string]$WorkFolder) {
+    $dism=Join-Path $env:SystemRoot 'System32\dism.exe'
+    $wim=$InstallFile.FullName
+    if ($InstallFile.Extension -ieq '.esd') {
+        $editions=@(Get-WindowsImage -ImagePath $InstallFile.FullName | Sort-Object ImageIndex)
+        if ($editions.Count -eq 0) { throw 'Keine Windows-Editionen in install.esd gefunden.' }
+        $wim=Join-Path $WorkFolder 'install.wim'
+        foreach ($edition in $editions) {
+            Write-Host "install.esd: Edition $($edition.ImageIndex) von $($editions.Count) wird exportiert ($($edition.ImageName)) ..."
+            & $dism /English /Export-Image "/SourceImageFile:$($InstallFile.FullName)" "/SourceIndex:$($edition.ImageIndex)" "/DestinationImageFile:$wim" /Compress:max /CheckIntegrity | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "DISM konnte install.esd nicht exportieren (Code $LASTEXITCODE)." }
+        }
+        $exported=@(Get-WindowsImage -ImagePath $wim | Sort-Object ImageIndex)
+        if ($exported.Count -ne $editions.Count) { throw 'Nicht alle Windows-Editionen wurden exportiert.' }
+        for ($index=0; $index -lt $editions.Count; $index++) {
+            if ($exported[$index].ImageName -cne $editions[$index].ImageName) { throw 'Windows-Editionen stimmen nach dem Export nicht ueberein.' }
+        }
+    }
+    $wimSize=(Get-Item -LiteralPath $wim).Length
+    $free=(Get-PSDrive -Name ([IO.Path]::GetPathRoot($WorkFolder).Substring(0,1))).Free
+    if ($free -lt $wimSize + 1GB) { throw 'Zu wenig temporaerer Speicher zum Teilen der Windows-Installation.' }
+    Write-Host 'Windows-Installation wird in FAT32-kompatible Teile zerlegt ...'
+    & $dism /English /Split-Image "/ImageFile:$wim" "/SWMFile:$(Join-Path $WorkFolder 'install.swm')" /FileSize:3800 /CheckIntegrity | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "DISM konnte die Windows-Installation nicht teilen (Code $LASTEXITCODE)." }
+    $parts=@(Get-ChildItem -LiteralPath $WorkFolder -Filter 'install*.swm' -File)
+    if (!(Test-Path -LiteralPath (Join-Path $WorkFolder 'install.swm') -PathType Leaf) -or @($parts | Where-Object { $_.Length -eq 0 -or $_.Length -gt 4294967295 }).Count -gt 0) {
+        throw 'DISM hat keine gueltigen FAT32-kompatiblen Installationsdateien erzeugt.'
+    }
+    return $parts
 }
 function Assert-BootMode($Mode, $Facts) {
     if ($Mode -notin @('UEFI','BIOS','Both')) { throw 'Ungueltiges Windows-Bootverfahren.' }
@@ -296,10 +326,15 @@ try {
         if ($files.Count -eq 0) { throw 'ISO enthaelt keine Dateien.' }
         $large = @($files | Where-Object { $_.Length -gt 4294967295 })
         $wim = Join-Path $source 'sources\install.wim'
-        foreach ($file in $large) { if ($file.FullName -ine $wim) { throw "Datei zu gross fuer FAT32: $($file.Name). Nur install.wim kann automatisch geteilt werden." } }
+        $esd = Join-Path $source 'sources\install.esd'
+        foreach ($file in $large) { if ($file.FullName -notin @($wim,$esd)) { throw "Datei zu gross fuer FAT32: $($file.Name). Nur install.wim und install.esd koennen aufgeteilt werden." } }
+        if ($large.Count -gt 0 -and @($files | Where-Object { $_.DirectoryName -ieq (Join-Path $source 'sources') -and $_.Name -match '^install(?:\.wim|\.esd|\d*\.swm)$' }).Count -ne 1) {
+            throw 'Mehrere Windows-Installationsabbilder gefunden. Eine ISO mit genau einer install.wim oder install.esd verwenden.'
+        }
         $partitionSize = [long]([Math]::Min(31GB, [long]$disk.Size - 16MB))
         $total = [long](($files | Measure-Object Length -Sum).Sum)
-        if ($partitionSize -lt 1GB -or $total + 512MB -gt $partitionSize) { throw 'Zu wenig Platz. Die FAT32-Partition ist maximal 31 GiB gross; 512 MiB Reserve sind erforderlich.' }
+        $unchangedSize = $total - [long](($large | Measure-Object Length -Sum).Sum)
+        if ($partitionSize -lt 1GB -or $unchangedSize + 512MB -gt $partitionSize) { throw 'Zu wenig Platz. Die FAT32-Partition ist maximal 31 GiB gross; 512 MiB Reserve sind erforderlich.' }
         if ($large.Count -gt 0) {
             $splitFolder = Join-Path ([IO.Path]::GetTempPath()) ('Startwerk-split-' + [guid]::NewGuid())
             [IO.Directory]::CreateDirectory($splitFolder) | Out-Null
@@ -307,14 +342,10 @@ try {
             [IO.File]::WriteAllText($marker,'preflight'); Assert-LocalSource $marker $disk.Number
             Remove-Item -LiteralPath $marker
             $free = (Get-PSDrive -Name ([IO.Path]::GetPathRoot($splitFolder).Substring(0,1))).Free
-            if ($free -lt ($large[0].Length + 1GB)) { throw 'Zu wenig temporaerer Speicher zum Teilen von install.wim.' }
-            Write-Output 'install.wim wird vor dem Loeschen lokal in FAT32-kompatible Teile zerlegt ...'
-            & "$env:SystemRoot\System32\dism.exe" /English /Split-Image "/ImageFile:$wim" "/SWMFile:$(Join-Path $splitFolder 'install.swm')" /FileSize:3800 /CheckIntegrity
-            if ($LASTEXITCODE -ne 0) { throw "DISM konnte install.wim nicht teilen (Code $LASTEXITCODE)." }
-            $splitFiles = @(Get-ChildItem -LiteralPath $splitFolder -Filter '*.swm' -File)
-            if ($splitFiles.Count -eq 0) { throw 'DISM hat keine SWM-Dateien erzeugt.' }
+            if ($free -lt ($large[0].Length + 1GB)) { throw 'Zu wenig temporaerer Speicher zum Vorbereiten der Windows-Installation.' }
+            $splitFiles = @(Split-WindowsInstallImage $large[0] $splitFolder)
             $splitSize = [long](($splitFiles | Measure-Object Length -Sum).Sum)
-            if ($total - $large[0].Length + $splitSize + 512MB -gt $partitionSize) { throw 'Die geteilte Windows-Installation passt nicht auf das Ziel.' }
+            if ($unchangedSize + $splitSize + 512MB -gt $partitionSize) { throw 'Die geteilte Windows-Installation passt nicht auf das Ziel.' }
         }
         [StartwerkNative]::CheckAvailable($volumes)
         $disk = Get-CheckedDisk $request
