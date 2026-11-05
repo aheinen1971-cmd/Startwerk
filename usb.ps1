@@ -22,6 +22,35 @@ function Get-CheckedDisk($Request) {
 function Get-Volumes($DiskNumber) {
     return @(Get-Partition | Where-Object DiskNumber -eq $DiskNumber | ForEach-Object { $_.AccessPaths } | Where-Object { $_ -match '^\\\\\?\\Volume\{' } | Select-Object -Unique)
 }
+function Test-UnformattedRemovableLayout($Disk, $Partitions) {
+    return ($Disk.PartitionStyle -eq 'MBR' -and $Partitions.Count -eq 1 -and
+        $Partitions[0].Offset -eq 0 -and $Partitions[0].Size -eq $Disk.Size -and
+        [int][char]$Partitions[0].DriveLetter -eq 0)
+}
+function Initialize-RestoredUsb($Request) {
+    $disk=Get-CheckedDisk $Request
+    if ($disk.PartitionStyle -ne 'RAW') { $disk | Clear-Disk -RemoveData -RemoveOEM -Confirm:$false }
+    $disk=Get-CheckedDisk $Request
+    if ($disk.PartitionStyle -eq 'RAW') {
+        $disk | Initialize-Disk -PartitionStyle GPT | Out-Null
+    } else {
+        # Windows can report an unformatted removable device as one partition starting at byte zero.
+        $partitions=@(Get-Partition -Disk $disk)
+        if (!(Test-UnformattedRemovableLayout $disk $partitions)) { throw 'USB-Datentraeger wurde nicht vollstaendig geleert.' }
+        Write-Output 'Windows meldet eine unformatierte Gesamtpartition. Partitionslayout wird neu eingerichtet.'
+        $scriptPath=Join-Path ([IO.Path]::GetTempPath()) ('Startwerk-diskpart-'+[guid]::NewGuid()+'.txt')
+        try {
+            @("select disk $([int]$disk.Number)",'clean','convert gpt') | Set-Content -LiteralPath $scriptPath -Encoding ascii
+            Assert-LocalSource $scriptPath $disk.Number
+            $disk=Get-CheckedDisk $Request
+            if (!(Test-UnformattedRemovableLayout $disk @(Get-Partition -Disk $disk))) { throw 'USB-Partitionslayout hat sich geaendert.' }
+            & (Join-Path $env:SystemRoot 'System32\diskpart.exe') /s $scriptPath | Write-Output
+            if ($LASTEXITCODE -ne 0) { throw "Partitionslayout konnte nicht neu eingerichtet werden (DiskPart-Code $LASTEXITCODE)." }
+        } finally {
+            Remove-Item -LiteralPath $scriptPath -ErrorAction SilentlyContinue
+        }
+    }
+}
 function Get-CompatibilityFacts($Info) {
     $architecture=switch ([int]$Info.Architecture) { 9 {'amd64'} 12 {'arm64'} default {''} }
     $version=[version]$Info.Version
@@ -315,6 +344,20 @@ if ($SelfTest) {
         if ($final -notmatch '^\\\\\?\\[A-Za-z]:\\') { throw "Ungueltige Pfadaufloesung: $final" }
     } finally { Remove-Item -LiteralPath $testFile -ErrorAction SilentlyContinue }
     Write-Output 'PASS: USB guard (9 rejection cases), image validation (4 cases), final source path. No device writes.'
+    $layout=[pscustomobject]@{PartitionStyle='MBR';Size=16MB}
+    $pseudoPartition=[pscustomobject]@{Offset=0;Size=16MB;DriveLetter=[char]0}
+    if (!(Test-UnformattedRemovableLayout $layout @($pseudoPartition))) { throw 'Unformatierte Gesamtpartition nicht erkannt.' }
+    foreach ($different in @(
+        @(@{Offset=512;Size=16MB;DriveLetter=[char]0}),
+        @(@{Offset=0;Size=15MB;DriveLetter=[char]0}),
+        @(@{Offset=0;Size=16MB;DriveLetter='H'}),
+        @($pseudoPartition,$pseudoPartition)
+    )) {
+        if (Test-UnformattedRemovableLayout $layout @($different)) { throw 'Normales Partitionslayout als Gesamtpartition erkannt.' }
+    }
+    $layout.PartitionStyle='GPT'
+    if (Test-UnformattedRemovableLayout $layout @($pseudoPartition)) { throw 'GPT als unformatierte Gesamtpartition erkannt.' }
+    Write-Output 'PASS: removable whole-disk layout recognized and ordinary partitions excluded.'
     $memory=New-Object IO.MemoryStream
     try {
         [StartwerkNative]::TestCapacity($memory,(4MB+512),512,[Action[string]]{param($message)})
@@ -369,13 +412,10 @@ try {
             Write-Output 'Kapazitaetstest bestanden. Mit Stick wiederherstellen kann der Datenspeicher eingerichtet werden.'
         } else {
             [StartwerkNative]::CheckAvailable($volumes)
+            Initialize-RestoredUsb $request
             $disk=Get-CheckedDisk $request
-            if ($disk.PartitionStyle -ne 'RAW') { $disk | Clear-Disk -RemoveData -RemoveOEM -Confirm:$false }
-            $disk=Get-CheckedDisk $request
-            if ($disk.PartitionStyle -ne 'RAW') { throw 'USB-Datentraeger wurde nicht vollstaendig geleert.' }
-            $disk | Initialize-Disk -PartitionStyle GPT | Out-Null
-            $disk=Get-CheckedDisk $request
-            $partition=New-Partition -DiskNumber $disk.Number -UseMaximumSize -AssignDriveLetter
+            if ($disk.PartitionStyle -ne 'GPT' -or @(Get-Partition | Where-Object { $_.DiskNumber -eq $disk.Number -and $_.Type -ne 'Reserved' }).Count -ne 0) { throw 'USB-Partitionslayout wurde nicht vollstaendig neu eingerichtet.' }
+            $partition=New-Partition -InputObject $disk -UseMaximumSize -AssignDriveLetter
             $volume=$partition | Format-Volume -FileSystem exFAT -NewFileSystemLabel 'USB' -Force -Confirm:$false
             if (!$volume.DriveLetter -or $volume.FileSystem -ine 'exFAT' -or $partition.Size -lt $disk.Size - 32MB) { throw 'Datenspeicher konnte nicht vollstaendig eingerichtet werden.' }
             Write-Output "Datenspeicher wiederhergestellt: $($volume.DriveLetter):, exFAT, $([Math]::Round($volume.Size/1GB,2)) GiB."

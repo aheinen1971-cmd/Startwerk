@@ -41,6 +41,7 @@ try
     Check(lines.Any(x=>x.Contains("16 Windows boot"))&&lines.Any(x=>x.Contains("9 rejection")),"real embedded PowerShell guard and boot matrix pass without device writes");
     Check(lines.Any(x=>x.Contains("Windows 11 answer file")),"real embedded answer generation, file SHA256, metadata classification and collision guards pass");
     Check(lines.Any(x=>x.Contains("altered readback rejected")), "capacity scan rejects tampered data and reads the final short block");
+    Check(lines.Any(x=>x.Contains("whole-disk layout recognized")), "restore fallback recognizes only the unformatted removable layout");
     // Independent 7-Zip CRC64 fixture with an 8192-byte partitioned image.
     var compressed = Convert.FromBase64String("/Td6WFoAAATm1rRGAgAhAQIAAAC875584B//ADddAABv/fyfL0YDl81/3shI4WG8z6zf/GCAG9hLHzXgmXPqNgB4Ny/X7uluCAQPAp+3cGUQho1lQgAAAKNUj9yAqdRsAAFTgEAAAAArRr1jscRn+wIAAAAABFla");
     string archive = Path.Combine(root, "sample.img.xz");
