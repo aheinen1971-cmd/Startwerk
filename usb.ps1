@@ -1,7 +1,7 @@
-param([switch]$SelfTest, [string]$ApplicationPath)
+param([switch]$SelfTest, [string]$ApplicationPath, [string]$RequestJson)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-[Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
+if (!$PSBoundParameters.ContainsKey('RequestJson')) { [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false) }
 
 function Assert-Target($Disk, $Request) {
     if ($null -eq $Disk -or $Disk.BusType -ne 'USB' -or $Disk.IsBoot -or $Disk.IsSystem -or $Disk.IsReadOnly -or $Disk.IsOffline) { throw 'Das Ziel ist kein freigegebener USB-Datentraeger.' }
@@ -151,9 +151,12 @@ using System;
 using System.IO;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using Microsoft.Win32.SafeHandles;
 public static class StartwerkNative {
  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
@@ -182,7 +185,10 @@ public static class StartwerkNative {
   } catch { foreach(var h in handles) h.Dispose(); throw; }
  }
  public static void CheckAvailable(string[] volumes) { var handles=Lock(volumes); foreach(var h in handles) h.Dispose(); }
- public static void TestCapacity(Stream disk, long capacity, int sector, Action<string> log) {
+ static void ReportCapacity(Action<string> progress, string phase, long done, long capacity, Stopwatch clock) {
+  if(progress!=null) progress(string.Format(CultureInfo.InvariantCulture,"CAPACITY_PROGRESS {0} {1} {2} {3:F3}",phase,done,capacity,clock.Elapsed.TotalSeconds));
+ }
+ public static bool TestCapacity(Stream disk, long capacity, int sector, Action<string> log, Func<bool> cancel=null, Action<string> progress=null) {
   const int blockSize=4*1024*1024;
   if((sector!=512 && sector!=4096) || capacity<=0 || capacity%sector!=0) throw new IOException("Ungueltige Datentraegergroesse oder Sektorgroesse.");
   var buffer=new byte[blockSize];
@@ -191,21 +197,35 @@ public static class StartwerkNative {
   using(var hash=SHA256.Create()) {
    disk.Position=0;
    int last=-1;
+   var clock=Stopwatch.StartNew();
+   long reported=0;
+   bool stopped=false;
+   ReportCapacity(progress,"write",0,capacity,clock);
    for(long offset=0;offset<capacity;offset+=blockSize) {
+    if(cancel!=null && cancel()) { stopped=true; break; }
     int count=(int)Math.Min(blockSize,capacity-offset);
     random.GetBytes(buffer);
     expected.Add(hash.ComputeHash(buffer,0,count));
     disk.Write(buffer,0,count);
     int percent=(int)((offset+count)*100/capacity);
     if(percent/5!=last) { log("Testdaten schreiben: "+percent+" %");last=percent/5; }
+    if(offset+count<capacity && clock.ElapsedMilliseconds-reported>=1000) {
+     ReportCapacity(progress,"write",offset+count,capacity,clock); reported=clock.ElapsedMilliseconds;
+    }
    }
    var file=disk as FileStream;
    if(file!=null) file.Flush(true); else disk.Flush();
+   if(stopped || (cancel!=null && cancel())) return false;
+   ReportCapacity(progress,"write",capacity,capacity,clock);
    log("Testdaten werden zurueckgelesen ...");
    disk.Position=0;
    last=-1;
+   clock.Restart();
+   reported=0;
+   ReportCapacity(progress,"read",0,capacity,clock);
    int index=0;
    for(long offset=0;offset<capacity;offset+=blockSize,index++) {
+    if(cancel!=null && cancel()) return false;
     int count=(int)Math.Min(blockSize,capacity-offset);
     int received=0;
     while(received<count) {
@@ -219,16 +239,25 @@ public static class StartwerkNative {
     }
     int percent=(int)((offset+count)*100/capacity);
     if(percent/5!=last) { log("Testdaten pruefen: "+percent+" %");last=percent/5; }
+    if(clock.ElapsedMilliseconds-reported>=1000 || offset+count==capacity) {
+     ReportCapacity(progress,"read",offset+count,capacity,clock); reported=clock.ElapsedMilliseconds;
+    }
    }
   }
+  return true;
  }
- public static void TestUsb(int number, long capacity, int sector, string[] volumes) {
-  var handles=Lock(volumes);
-  try {
-   // A buffered read can extend past the last physical sector on the final short block.
-   using(var disk=new FileStream(@"\\.\PhysicalDrive"+number,FileMode.Open,FileAccess.ReadWrite,FileShare.ReadWrite,1,FileOptions.WriteThrough))
-    TestCapacity(disk,capacity,sector,Console.WriteLine);
-  } finally { foreach(var handle in handles) handle.Dispose(); }
+ public static bool TestUsb(int number, long capacity, int sector, string[] volumes, string cancelEvent) {
+  using(var signal=string.IsNullOrEmpty(cancelEvent)?null:EventWaitHandle.OpenExisting(cancelEvent)) {
+   Func<bool> cancel=()=>signal!=null && signal.WaitOne(0);
+   if(cancel()) return false;
+   var handles=Lock(volumes);
+   try {
+    if(cancel()) return false;
+    // A buffered read can extend past the last physical sector on the final short block.
+    using(var disk=new FileStream(@"\\.\PhysicalDrive"+number,FileMode.Open,FileAccess.ReadWrite,FileShare.ReadWrite,1,FileOptions.WriteThrough))
+     return TestCapacity(disk,capacity,sector,Console.WriteLine,cancel,signal==null?(Action<string>)null:Console.WriteLine);
+   } finally { foreach(var handle in handles) handle.Dispose(); }
+  }
  }
  public static void ValidateImage(string path, long capacity, int sector) {
   if(sector!=512 && sector!=4096) throw new IOException("Nicht unterstuetzte Sektorgroesse.");
@@ -360,10 +389,10 @@ if ($SelfTest) {
     Write-Output 'PASS: removable whole-disk layout recognized and ordinary partitions excluded.'
     $memory=New-Object IO.MemoryStream
     try {
-        [StartwerkNative]::TestCapacity($memory,(4MB+512),512,[Action[string]]{param($message)})
+        $null=[StartwerkNative]::TestCapacity($memory,(4MB+512),512,[Action[string]]{param($message)})
         $rejected=$false
         try {
-            [StartwerkNative]::TestCapacity($memory,(4MB+512),512,[Action[string]]{
+            $null=[StartwerkNative]::TestCapacity($memory,(4MB+512),512,[Action[string]]{
                 param($message)
                 if ($message.StartsWith('Testdaten werden')) {
                     $memory.Position=0
@@ -379,12 +408,30 @@ if ($SelfTest) {
         if (!$rejected) { throw 'Kapazitaetstest hat eine manipulierte Testdatei akzeptiert.' }
     } finally { $memory.Dispose() }
     Write-Output 'PASS: full-capacity pattern with partial last block; altered readback rejected. No device writes.'
+    foreach ($phase in @('before-write','write','read')) {
+        $memory=New-Object IO.MemoryStream
+        $state=[pscustomobject]@{Cancel=($phase -eq 'before-write');ReadStarted=$false;ReadBlock=$false}
+        try {
+            $complete=[StartwerkNative]::TestCapacity($memory,(8MB+512),512,[Action[string]]{
+                param($message)
+                if ($message.StartsWith('Testdaten schreiben:') -and $phase -eq 'write') { $state.Cancel=$true }
+                if ($message.StartsWith('Testdaten werden')) { $state.ReadStarted=$true }
+                if ($message.StartsWith('Testdaten pruefen:')) { $state.ReadBlock=$true; $state.Cancel=$true }
+            },[Func[bool]]{return $state.Cancel})
+            $expectedLength=switch ($phase) { 'before-write' {0} 'write' {4MB} 'read' {8MB+512} }
+            if ($complete -or $memory.Length -ne $expectedLength -or
+                $state.ReadStarted -ne ($phase -eq 'read') -or $state.ReadBlock -ne ($phase -eq 'read')) { throw "Sicherer Abbruch fehlgeschlagen: $phase" }
+            if ($phase -eq 'read' -and $memory.Position -ne 4MB) { throw 'Nach dem Abbruch wurden weitere Bloecke gelesen.' }
+        } finally { $memory.Dispose() }
+    }
+    Write-Output 'PASS: capacity cancellation before first write, between writes and between reads. No device writes.'
     exit 0
 }
 
 $mountedHere = $false; $imagePath = $null; $sourceLock = $null; $splitFolder = $null
 try {
-    $request = [Console]::ReadLine() | ConvertFrom-Json
+    if (!$PSBoundParameters.ContainsKey('RequestJson')) { $RequestJson=[Console]::ReadLine() }
+    $request = $RequestJson | ConvertFrom-Json
     if ($null -eq $request) { throw 'Auftrag fehlt.' }
     if ($request.InspectOnly) {
         $imagePath = [IO.Path]::GetFullPath([string]$request.Path)
@@ -407,15 +454,24 @@ try {
         $volumes=[string[]]@(Get-Volumes $disk.Number)
         $disk=Get-CheckedDisk $request
         if ($request.DeviceAction -eq 'Test') {
-            [StartwerkNative]::TestUsb($disk.Number,[long]$disk.Size,[int]$disk.LogicalSectorSize,$volumes)
+            $complete=[StartwerkNative]::TestUsb($disk.Number,[long]$disk.Size,[int]$disk.LogicalSectorSize,$volumes,[string]$request.CancelEvent)
             Update-HostStorageCache
+            if (!$complete) { exit 2 }
             Write-Output 'Kapazitaetstest bestanden. Mit Stick wiederherstellen kann der Datenspeicher eingerichtet werden.'
         } else {
             [StartwerkNative]::CheckAvailable($volumes)
             Initialize-RestoredUsb $request
             $disk=Get-CheckedDisk $request
             if ($disk.PartitionStyle -ne 'GPT' -or @(Get-Partition | Where-Object { $_.DiskNumber -eq $disk.Number -and $_.Type -ne 'Reserved' }).Count -ne 0) { throw 'USB-Partitionslayout wurde nicht vollstaendig neu eingerichtet.' }
-            $partition=New-Partition -InputObject $disk -UseMaximumSize -AssignDriveLetter
+            $partition=New-Partition -DiskNumber $disk.Number -UseMaximumSize -AssignDriveLetter
+            if (!$partition) {
+                # The storage provider can finish creating the partition before returning its object.
+                Update-HostStorageCache
+                $disk=Get-CheckedDisk $request
+                $created=@(Get-Partition | Where-Object { $_.DiskNumber -eq $disk.Number -and $_.GptType -eq '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}' })
+                if ($created.Count -ne 1 -or $created[0].Size -lt $disk.Size - 32MB) { throw 'Die neue USB-Datenpartition konnte nicht eindeutig ermittelt werden.' }
+                $partition=$created[0]
+            }
             $volume=$partition | Format-Volume -FileSystem exFAT -NewFileSystemLabel 'USB' -Force -Confirm:$false
             if (!$volume.DriveLetter -or $volume.FileSystem -ine 'exFAT' -or $partition.Size -lt $disk.Size - 32MB) { throw 'Datenspeicher konnte nicht vollstaendig eingerichtet werden.' }
             Write-Output "Datenspeicher wiederhergestellt: $($volume.DriveLetter):, exFAT, $([Math]::Round($volume.Size/1GB,2)) GiB."

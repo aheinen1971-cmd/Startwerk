@@ -50,7 +50,11 @@
     <CheckBox x:Name="Verify" IsChecked="True" Visibility="Collapsed" Foreground="#C8D5E6" Content="USB-Daten nach dem Schreiben prüfen" Margin="0,0,0,12"/>
    </StackPanel>
    <Border Grid.Row="2" Background="#202D3E" Padding="14" CornerRadius="8" Margin="0,0,0,18"><TextBlock x:Name="Notice" Text="Alle Dateien auf dem ausgewählten USB-Ziel werden gelöscht. Prüfe vor dem Start Modell, Größe und Datenträgernummer." Foreground="#C8D5E6"/></Border>
-   <StackPanel Grid.Row="3" Orientation="Horizontal"><Button x:Name="StartButton" Content="USB-Stick erstellen" Background="#147A64" Click="Start" FontWeight="SemiBold"/><TextBlock x:Name="Status" Text="Bereit" VerticalAlignment="Center" Foreground="#9DAEC5"/></StackPanel>
+   <DockPanel Grid.Row="3">
+    <Button x:Name="StartButton" Content="USB-Stick erstellen" Background="#147A64" Click="Start" FontWeight="SemiBold"/>
+    <Button x:Name="CancelCapacityButton" Content="Test abbrechen" Click="CancelCapacityClick" Visibility="Collapsed"/>
+    <TextBlock x:Name="Status" Text="Bereit" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#9DAEC5"/>
+   </DockPanel>
    <ProgressBar x:Name="Progress" Grid.Row="4" Height="5" BorderThickness="0" Margin="0,18,0,12" Background="#243247" Foreground="#6EE7C2"/>
    <TextBox x:Name="Log" MinHeight="90" Grid.Row="5" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12" Background="#0C1119"/>
    <TextBlock Grid.Row="6" Text="Windows und Linux auf USB · Bootfähige Abbilder · Datenprüfung" Foreground="#7E91AB" Margin="0,12,0,0" FontSize="11"/>

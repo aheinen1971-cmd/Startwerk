@@ -9,7 +9,7 @@ Startwerk ist die eigenständige USB-Version von Brennwerk. Der bisherige Brennw
 - Linux-Katalog einschließlich Linux Mint und geprüfter alternativer Downloadseiten.
 - Anbieter-Prüfsummen bei unterstützten direkten ISO-Downloads; Datenprüfung nach dem USB-Schreiben standardmäßig eingeschaltet.
 - Datei-Prüfsumme berechnet SHA-256 für vorhandene Dateien und vergleicht auf Wunsch mit dem Wert des Anbieters.
-- Stick prüfen beschreibt die gesamte gemeldete Kapazität mit Testdaten und vergleicht sie beim Zurücklesen. Stick wiederherstellen richtet den USB-Stick als exFAT-Datenspeicher ein. Beide Vorgänge löschen die Daten auf dem gewählten Stick.
+- Stick prüfen beschreibt die gesamte gemeldete Kapazität mit Testdaten und vergleicht sie beim Zurücklesen. Die Restzeit wird je Phase geschätzt. Beim Abbruch wartet Startwerk auf den laufenden Zugriff und gibt den Stick frei. Stick wiederherstellen richtet ihn anschließend auf Wunsch als exFAT-Datenspeicher ein. Beide Vorgänge löschen Daten auf dem gewählten Stick.
 - Sicherheitsprüfung des USB-Ziels und Eingabe der genauen Datenträgernummer vor dem Löschen.
 - Webseitenprüfung alle sechs Stunden, solange Startwerk geöffnet ist; überfällige Prüfung beim nächsten Start.
 - Eigener signierter GitHub-Updatekanal und eigene Einstellungen unter `%LOCALAPPDATA%\Startwerk`.

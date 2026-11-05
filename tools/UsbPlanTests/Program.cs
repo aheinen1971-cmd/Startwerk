@@ -42,6 +42,18 @@ try
     Check(lines.Any(x=>x.Contains("Windows 11 answer file")),"real embedded answer generation, file SHA256, metadata classification and collision guards pass");
     Check(lines.Any(x=>x.Contains("altered readback rejected")), "capacity scan rejects tampered data and reads the final short block");
     Check(lines.Any(x=>x.Contains("whole-disk layout recognized")), "restore fallback recognizes only the unformatted removable layout");
+    Check(lines.Any(x=>x.Contains("capacity cancellation before first write")), "worker stops before writing, between writes and between reads");
+    var firstProgress=CapacityProgress.Parse("CAPACITY_PROGRESS write 0 100 0.000");
+    var fastProgress=CapacityProgress.Parse("CAPACITY_PROGRESS write 2 100 2.999");
+    var writeProgress=CapacityProgress.Parse("CAPACITY_PROGRESS write 25 100 10.000");
+    var readProgress=CapacityProgress.Parse("CAPACITY_PROGRESS read 25 100 4.000");
+    var lastProgress=CapacityProgress.Parse("CAPACITY_PROGRESS read 100 100 6.000");
+    Check(firstProgress.Remaining is null && fastProgress.Remaining is null, "ETA waits for bytes and a timing sample");
+    Check(writeProgress.PhasePercent==25 && writeProgress.OverallPercent==12.5 && writeProgress.Remaining==TimeSpan.FromSeconds(30), "write ETA and combined progress");
+    Check(readProgress.OverallPercent==62.5 && readProgress.Remaining==TimeSpan.FromSeconds(12), "read ETA uses read speed independently");
+    Check(lastProgress.OverallPercent==100 && lastProgress.Remaining==TimeSpan.Zero, "finished read shows zero ETA");
+    Reject(()=>CapacityProgress.Parse("CAPACITY_PROGRESS write 1 0 1.000"),"invalid progress total rejected");
+    Reject(()=>CapacityProgress.Parse("CAPACITY_PROGRESS read 11 10 1.000"),"progress beyond total rejected");
     // Independent 7-Zip CRC64 fixture with an 8192-byte partitioned image.
     var compressed = Convert.FromBase64String("/Td6WFoAAATm1rRGAgAhAQIAAAC875584B//ADddAABv/fyfL0YDl81/3shI4WG8z6zf/GCAG9hLHzXgmXPqNgB4Ny/X7uluCAQPAp+3cGUQho1lQgAAAKNUj9yAqdRsAAFTgEAAAAArRr1jscRn+wIAAAAABFla");
     string archive = Path.Combine(root, "sample.img.xz");

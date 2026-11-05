@@ -202,6 +202,12 @@ public partial class MainWindow : Window
     }
     void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        if (capacityCancellation is not null)
+        {
+            e.Cancel = true;
+            RequestCapacityCancellation();
+            return;
+        }
         if (busy&&!InstallingUpdate) { e.Cancel = true; MessageBox.Show(this, "Bitte warte, bis der Vorgang beendet ist.", "Vorgang läuft"); }
     }
 }
