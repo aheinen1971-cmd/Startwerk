@@ -172,19 +172,50 @@ public static class StartwerkNative {
   }
  }
  static void Ioctl(SafeFileHandle h, uint code) { uint n; if(!DeviceIoControl(h,code,IntPtr.Zero,0,IntPtr.Zero,0,out n,IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error(),"Laufwerk belegt oder nicht zugreifbar. Alle Dateien und Explorer-Fenster auf dem USB-Ziel schliessen."); }
- static List<SafeFileHandle> Lock(string[] volumes) {
+ static List<SafeFileHandle> Lock(string[] volumes, bool dismount=true) {
   var handles=new List<SafeFileHandle>();
   try {
    foreach(string volume in volumes) {
-    var h=CreateFile(volume.TrimEnd('\\'),0xC0000000,3,IntPtr.Zero,3,0,IntPtr.Zero);
+    var h=CreateFile(volume.TrimEnd('\\'),dismount?0xC0000000u:0x80000000u,3,IntPtr.Zero,3,0,IntPtr.Zero);
     if(h.IsInvalid) { h.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
     handles.Add(h); Ioctl(h,0x90018);
    }
-   foreach(var h in handles) Ioctl(h,0x90020);
+   if(dismount) foreach(var h in handles) Ioctl(h,0x90020);
    return handles;
   } catch { foreach(var h in handles) h.Dispose(); throw; }
  }
  public static void CheckAvailable(string[] volumes) { var handles=Lock(volumes); foreach(var h in handles) h.Dispose(); }
+ public static bool CopyForProbe(int number, long capacity, int sector, string[] volumes, string destination, string cancelEvent) {
+  if(sector!=512 || capacity<=0 || capacity%sector!=0) throw new IOException("Die Bootprobe erfordert einen USB-Datentraeger mit logischen 512-Byte-Sektoren.");
+  using(var signal=EventWaitHandle.OpenExisting(cancelEvent)) {
+   if(signal.WaitOne(0)) return false;
+   var handles=Lock(volumes,false);
+   try {
+    using(var disk=new FileStream(@"\\.\PhysicalDrive"+number,FileMode.Open,FileAccess.Read,FileShare.ReadWrite,1,FileOptions.None))
+    using(var copy=new FileStream(destination,FileMode.Open,FileAccess.Write,FileShare.None,1024*1024))
+    using(var hash=SHA256.Create()) {
+     if(copy.Length!=0) throw new IOException("Die lokale Testdatei ist nicht leer.");
+     var buffer=new byte[4*1024*1024];
+     int last=-1;
+     for(long done=0;done<capacity;) {
+      if(signal.WaitOne(0)) return false;
+      int length=(int)Math.Min(buffer.Length,capacity-done);
+      int count=disk.Read(buffer,0,length);
+      if(count!=length) throw new IOException("Die USB-Testkopie konnte nicht vollstaendig gelesen werden.");
+      copy.Write(buffer,0,count);
+      hash.TransformBlock(buffer,0,count,null,0);
+      done+=count;
+      int percent=(int)(100.0*done/capacity);
+      if(percent/5!=last) { Console.WriteLine("USB-Testkopie: "+percent+" %");last=percent/5; }
+     }
+     copy.Flush();
+     hash.TransformFinalBlock(new byte[0],0,0);
+     Console.WriteLine("STICKPASS_SNAPSHOT_SHA256 "+BitConverter.ToString(hash.Hash).Replace("-",""));
+    }
+    return true;
+   } finally { foreach(var h in handles) h.Dispose(); }
+  }
+ }
  static void ReportCapacity(Action<string> progress, string phase, long done, long capacity, Stopwatch clock) {
   if(progress!=null) progress(string.Format(CultureInfo.InvariantCulture,"CAPACITY_PROGRESS {0} {1} {2} {3:F3}",phase,done,capacity,clock.Elapsed.TotalSeconds));
  }
@@ -449,6 +480,15 @@ try {
     $applicationSource = if ($ApplicationPath) { $ApplicationPath } else { $PSCommandPath }
     if ([string]::IsNullOrWhiteSpace($applicationSource)) { throw 'Anwendungspfad fehlt.' }
     Assert-LocalSource $applicationSource $disk.Number
+    if ($request.SnapshotPath) {
+        $destination=[IO.Path]::GetFullPath([string]$request.SnapshotPath)
+        Assert-LocalSource $destination $disk.Number
+        $volumes=[string[]]@(Get-Volumes $disk.Number)
+        $disk=Get-CheckedDisk $request
+        $complete=[StartwerkNative]::CopyForProbe($disk.Number,[long]$disk.Size,[int]$disk.LogicalSectorSize,$volumes,$destination,[string]$request.CancelEvent)
+        if (!$complete) { exit 2 }
+        exit 0
+    }
     if ($request.DeviceAction) {
         if ($request.DeviceAction -notin @('Restore','Test')) { throw 'Unbekannte USB-Aktion.' }
         $volumes=[string[]]@(Get-Volumes $disk.Number)
@@ -593,6 +633,10 @@ try {
                     if ((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash) { throw "Datenpruefung fehlgeschlagen: $($file.Name)" }
                 }
             }
+        }
+        if ($bootMode -in @('UEFI','Both')) {
+            $hasX64Efi=Test-Path -LiteralPath (Join-Path $destination 'efi\boot\bootx64.efi') -PathType Leaf
+            Write-Output "STICKPASS_X64_EFI $hasX64Efi"
         }
         Write-Output "Windows-USB fertig: $bootMode / $style / FAT32. Restlicher Platz bleibt unpartitioniert."
     }

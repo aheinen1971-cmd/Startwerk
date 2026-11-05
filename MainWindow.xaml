@@ -15,6 +15,7 @@
    <StackPanel x:Name="Navigation"><RadioButton x:Name="WindowsMode" IsChecked="True" GroupName="Mode" Content="Windows → USB" Checked="ModeChanged"/><RadioButton x:Name="RawMode" GroupName="Mode" Content="Linux / IMG → USB" Checked="ModeChanged"/></StackPanel>
    <Button x:Name="UpdateButton" Content="Updates" Click="OpenUpdates" Margin="0,10,0,0"/>
    <Button x:Name="WebsiteButton" Content="Webseiten prüfen" Click="OpenWebsites" Margin="0,10,0,0"/>
+   <Button x:Name="StickPassButton" Content="Stickpass …" Click="OpenStickPass" IsEnabled="False" Margin="0,10,0,0"/>
    <Border Background="#1B2534" Padding="14" CornerRadius="8" Margin="0,24,0,0"><TextBlock x:Name="AppVersion" Foreground="#9DAEC5" FontSize="12"/></Border>
   </StackPanel>
   <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto"><Grid MinHeight="750"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>

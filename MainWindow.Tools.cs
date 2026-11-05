@@ -46,6 +46,7 @@ public partial class MainWindow
         if (test) summary += " Der Test beschreibt und liest die gesamte Kapazität. Nach Test oder Abbruch kannst du den Stick wiederherstellen.";
         if (!ConfirmUsb(target, summary, test ? "Löschen und prüfen" : "Löschen und formatieren")) return;
 
+        InvalidateStickPass(target);
         SetBusy(true);
         string result;
         try
@@ -130,6 +131,8 @@ public partial class MainWindow
         {
             Status.Text = "SHA-256 wird berechnet …";
             var (digest, matches) = await Backend.CheckFileHash(file.FileName, expected);
+            if (matches.HasValue && string.Equals(file.FileName, ImagePath.Text, StringComparison.OrdinalIgnoreCase))
+                selectedManualHash = matches.Value ? digest : null;
             Status.Text = matches switch
             {
                 true => "Prüfsumme stimmt überein",

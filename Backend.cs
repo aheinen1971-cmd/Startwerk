@@ -58,24 +58,47 @@ public static class Backend
         if(windows11Compatibility&&!windows)throw new IOException("Windows-11-Kompatibilität ist nur im Windows-USB-Modus verfügbar.");
         return RunEmbeddedUsb(false, new { Path = path, SourceOrigin=sourceOrigin, target.Number, target.UniqueId, target.Size, target.Serial, Windows = windows, Verify = verify, BootMode = windows ? bootMode : "Image", Windows11Compatibility=windows11Compatibility }, log);
     }
+    public static async Task<string> CopyUsbForProbe(Target target, string path, Action<string> log, CancellationToken token)
+    {
+        string? digest = null;
+        await RunCancelableUsb(
+            name => new { target.Number, target.UniqueId, target.Size, target.Serial, SnapshotPath=path, CancelEvent=name },
+            line =>
+            {
+                const string prefix = "STICKPASS_SNAPSHOT_SHA256 ";
+                if (!line.StartsWith(prefix, StringComparison.Ordinal)) { log(line); return; }
+                string value = line[prefix.Length..];
+                if (value.Length != 64 || !value.All(Uri.IsHexDigit)) throw new IOException("Ungültige Prüfsumme der Bootprobe.");
+                digest = value;
+            }, token);
+        token.ThrowIfCancellationRequested();
+        return digest ?? throw new IOException("Die Prüfsumme der Bootprobe fehlt.");
+    }
     public static Task RestoreUsb(Target target, Action<string> log)
         => RunEmbeddedUsb(false, new { target.Number, target.UniqueId, target.Size, target.Serial, DeviceAction="Restore" }, log);
 
-    public static async Task<bool> TestUsb(Target target, CancellationToken token, Action<CapacityProgress> progress, Action<string> log)
+    public static Task<bool> TestUsb(Target target, CancellationToken token, Action<CapacityProgress> progress, Action<string> log)
+        => RunCancelableUsb(
+            name => new { target.Number, target.UniqueId, target.Size, target.Serial, DeviceAction="Test", CancelEvent=name },
+            line =>
+            {
+                if (line.StartsWith(CapacityProgress.Prefix, StringComparison.Ordinal)) progress(CapacityProgress.Parse(line));
+                else log(line);
+            }, token);
+
+    static async Task<bool> RunCancelableUsb(Func<string, object> request, Action<string> output, CancellationToken token)
     {
-        string cancelEvent = $@"Local\Startwerk-Capacity-{Guid.NewGuid():N}";
+        string cancelEvent = $@"Local\Startwerk-Usb-{Guid.NewGuid():N}";
         using var signal = new EventWaitHandle(false, EventResetMode.ManualReset, cancelEvent);
         using var registration = token.Register(() => signal.Set());
         Exception? callbackError = null;
-        int exit = await RunEmbeddedUsb(false,
-            new { target.Number, target.UniqueId, target.Size, target.Serial, DeviceAction="Test", CancelEvent=cancelEvent },
+        int exit = await RunEmbeddedUsb(false, request(cancelEvent),
             line =>
             {
                 if (callbackError is not null) return;
                 try
                 {
-                    if (line.StartsWith(CapacityProgress.Prefix, StringComparison.Ordinal)) progress(CapacityProgress.Parse(line));
-                    else log(line);
+                    output(line);
                 }
                 catch (Exception ex)
                 {
@@ -84,7 +107,7 @@ public static class Backend
                 }
             }, allowCancellation: true);
         if (callbackError is not null) throw new IOException(callbackError.Message, callbackError);
-        if (exit == 2 && !token.IsCancellationRequested) throw new IOException("Kapazitätstest unerwartet abgebrochen.");
+        if (exit == 2 && !token.IsCancellationRequested) throw new IOException("USB-Vorgang unerwartet abgebrochen.");
         return exit == 0;
     }
     public static async Task<(string Digest, bool? Matches)> CheckFileHash(string path, string expected)

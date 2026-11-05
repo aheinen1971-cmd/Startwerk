@@ -1,5 +1,4 @@
-Startwerk 0.3.2
+Startwerk 0.4.0
 
-- Der Kapazitätstest zeigt seinen Gesamtfortschritt und eine geschätzte Restzeit für die aktuelle Schreib- oder Lesephase.
-- „Test abbrechen“ beendet den Kapazitätstest nach dem laufenden Zugriff und gibt den Datenträger frei. Bereits geschriebene Testdaten bleiben auf dem Stick. Mit „Stick wiederherstellen“ lässt er sich anschließend als exFAT-Datenspeicher einrichten.
-- Die Wiederherstellung liest die neu erstellte Partition bei Bedarf erneut ein, wenn Windows sie nicht sofort zurückmeldet.
+- Der Stickpass hält Quelle, SHA-256, Anbieterprüfung und das Ergebnis der Rückleseprüfung nach dem Schreiben fest. Der Bericht kann als Textdatei gespeichert werden.
+- Für Windows-x64-Sticks mit UEFI-Startdatei gibt es eine optionale Bootprobe mit QEMU und geprüfter OVMF-Firmware. Sie verwendet eine temporäre, schreibgeschützte Kopie. Virtueller Start und Beobachtung auf einem echten PC bleiben getrennt.

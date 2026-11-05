@@ -22,6 +22,14 @@ Die Alternativquellen für MX, Lubuntu und Raspberry Pi öffnen Downloadseiten i
 
 Die automatischen Tests schreiben keine echten USB-Sticks. Mit Version 0.3.0 wurde ein Windows-USB-Abbild in einer UEFI-VM mit aktivem Secure Boot bis zum Windows-Setup gestartet. Ob es auf einem bestimmten Rechner startet, hängt auch von den Schlüsseln und Sperrlisten seiner Firmware und den Startdateien des Abbilds ab.
 
+## Stickpass und optionale UEFI-Bootprobe
+
+Der Stickpass hält Abbild, SHA-256, Anbieterprüfung und Rückleseprüfung fest. Er ist nach erfolgreichem Schreiben in der Seitenleiste verfügbar und lässt sich als Textdatei speichern. Beobachtungen von virtuellen und echten Starts werden separat ausgewiesen.
+
+Für Windows-x64-Medien mit UEFI-Startdatei kann Startwerk eine lokale, schreibgeschützte Kopie in QEMU als USB-Gerät starten. Die VM erhält keine Hostlaufwerke und kein Netzwerk. Nach dem Schließen des Fensters kannst du eintragen, ob das Windows-Setup sichtbar war. Die Bootprobe benötigt 512-Byte-Sektoren und freien Platz für die volle Stickkapazität plus 512 MiB auf dem temporären PC-Laufwerk.
+
+Wähle dazu eine vertrauenswürdige [QEMU-Installation für Windows](https://www.qemu.org/download/#windows) und den entpackten Ordner `usr/share/OVMF` aus dem geprüften [Ubuntu-OVMF-Paket 2024.02-2ubuntu0.10](https://archive.ubuntu.com/ubuntu/pool/main/e/edk2/ovmf_2024.02-2ubuntu0.10_all.deb). Startwerk gleicht die SHA-256-Werte von `OVMF_CODE_4M.secboot.fd` und `OVMF_VARS_4M.ms.fd` vor dem Start ab. Der Stickpass und die USB-Funktionen sind in der einzelnen Startwerk.exe enthalten.
+
 ## Bauen
 
 ```powershell

@@ -54,6 +54,28 @@ try
     Check(lastProgress.OverallPercent==100 && lastProgress.Remaining==TimeSpan.Zero, "finished read shows zero ETA");
     Reject(()=>CapacityProgress.Parse("CAPACITY_PROGRESS write 1 0 1.000"),"invalid progress total rejected");
     Reject(()=>CapacityProgress.Parse("CAPACITY_PROGRESS read 11 10 1.000"),"progress beyond total rejected");
+    var passTarget=new Target("usb","USB 7 · Test",7,"Private device id",16000000000,"Private serial");
+    var passPlan=UsbPlan.Create(win11,"UEFI");
+    string digestFixture=new string('A',64);
+    var pass=StickPass.Record(passTarget,passPlan,digestFixture,"Windows",digestFixture.ToLowerInvariant(),true,true,true);
+    Check(pass.Provider=="Windows"&&pass.PublisherHashVerified==true&&pass.SupportsSecureBootProbe,"stick pass retains verified provenance when the actual source hash matches");
+    string exported=pass.Report();
+    Check(exported.Contains("Anbieter-Prüfsumme stimmt überein")&&exported.Contains("Rückleseprüfung  Bestanden")&&!exported.Contains("Private ")&&!exported.Contains(root),"stick pass exports checks without paths or private disk IDs");
+    var changedPass=StickPass.Record(passTarget,passPlan,digestFixture,"Windows",new string('B',64),true,false,false);
+    Check(changedPass.Provider is null&&changedPass.PublisherHashVerified is null&&!changedPass.SupportsSecureBootProbe
+        &&changedPass.Report().Contains("Startdatei fehlt")&&changedPass.Report().Contains("Rückleseprüfung  Abgewählt"),"changed file drops provenance and missing EFI yields a specific finding");
+    Check((changedPass with{ManualHashMatched=true}).Report().Contains("Manuell eingegebene Referenz stimmt überein"),"manual SHA-256 match is distinct from provider verification");
+    pass.VirtualResult="Testfenster: Setup erreicht";
+    Check(pass.Report().Contains("Virtueller Start  Testfenster: Setup erreicht")&&pass.Report().Contains("echten PC  Nicht dokumentiert"),"virtual and physical observations are independent");
+    pass.CanProbe=false;
+    Check(!pass.SupportsSecureBootProbe,"historical stick pass can no longer launch a probe after destructive reuse");
+    var armPass=StickPass.Record(passTarget,UsbPlan.Create(win11 with{Architecture="arm64"},"UEFI"),digestFixture,null,null,null,true,false);
+    Check(!armPass.SupportsSecureBootProbe&&!armPass.Report().Contains("Startdatei fehlt"),"ARM64 media is excluded from the x64 test profile without a false missing-loader finding");
+    var probeArgs=BootProbe.BuildStartInfo(Path.Combine(root,"qemu-system-x86_64.exe"),Path.Combine(root,"stick, test.img"),Path.Combine(root,"code.fd"),Path.Combine(root,"keys.fd")).ArgumentList;
+    Check(probeArgs.Contains("q35,smm=on")&&probeArgs.Contains("driver=cfi.pflash01,property=secure,value=on")
+        &&probeArgs.Contains("usb-storage,bus=usb3.0,drive=stick,bootindex=1,removable=on")
+        &&probeArgs.Any(x=>x.Contains("readonly=on,id=stick")&&x.EndsWith("stick,, test.img"))&&probeArgs[probeArgs.IndexOf("-nic")+1]=="none",
+        "UEFI probe has a read-only local USB image, escaped paths, SMM and no network");
     // Independent 7-Zip CRC64 fixture with an 8192-byte partitioned image.
     var compressed = Convert.FromBase64String("/Td6WFoAAATm1rRGAgAhAQIAAAC875584B//ADddAABv/fyfL0YDl81/3shI4WG8z6zf/GCAG9hLHzXgmXPqNgB4Ny/X7uluCAQPAp+3cGUQho1lQgAAAKNUj9yAqdRsAAFTgEAAAAArRr1jscRn+wIAAAAABFla");
     string archive = Path.Combine(root, "sample.img.xz");

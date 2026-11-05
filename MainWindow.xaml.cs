@@ -68,7 +68,7 @@ public partial class MainWindow : Window
         var window=new IsoDownloadWindow(this,WindowsMode.IsChecked==true);
         if(window.ShowDialog()==true&&window.Result is {} result)
         {
-            await SelectImage(result.Path);
+            await SelectImage(result.Path,result);
             AddLog(result.PublisherHashVerified?"Original-ISO heruntergeladen und mit der Anbieter-Prüfsumme bestätigt.":"Original-ISO von Microsoft geladen; keine Anbieter-Vergleichsprüfsumme angegeben.");
         }
     }
@@ -110,10 +110,12 @@ public partial class MainWindow : Window
         try{BootInfo.Text=selectedImage is null?"Das Abbild wird nach der Auswahl schreibgeschützt untersucht. Vor dem Schreiben erscheint eine Zusammenfassung.":UsbPlan.Create(selectedImage,selectedImage.Windows?SelectedBoot:"Image",Windows11Compatibility.IsChecked==true).Description;}
         catch(Exception ex){BootInfo.Text=ex.Message;}
     }
-    public async Task SelectImage(string path)
+    public async Task SelectImage(string path, IsoDownloadResult? download = null)
     {
         if(busy)return;
         ReleasePreparedImage();
+        selectedDownload=null;
+        selectedManualHash=null;
         SetBusy(true);selectedImage=null;Windows11Compatibility.IsChecked=false;Windows11Compatibility.IsEnabled=false;ImagePath.Clear();ImageInfo.Text="Abbild wird schreibgeschützt untersucht …";
         try
         {
@@ -129,6 +131,7 @@ public partial class MainWindow : Window
             try{if(image.Windows)WindowsMode.IsChecked=true;else RawMode.IsChecked=true;ConfigureMode();BootChoice.SelectedIndex=image.Efi?0:1;}
             finally{selectingSource=false;}
             selectedImage=image;ImagePath.Text=image.Path;ImageInfo.Text=$"{image.Bytes/1073741824.0:F2} GiB"+(preparedImage is null?"":" entpackt")+$" · {image.Description}"+(image.Windows11?$" · Windows 11 ({image.Architecture})":"");
+            selectedDownload=download;
             Targets.SelectedIndex=-1;UpdateBootInfo();AddLog("Abbild erkannt: "+image.Description);
         }
         catch(Exception ex){ReleasePreparedImage();ImageInfo.Text="Abbild nicht ausgewählt: "+ex.Message;AddLog(ex.Message);}
@@ -180,10 +183,26 @@ public partial class MainWindow : Window
         SetBusy(true);
         try
         {
-            AddLog($"Start: {path} → {target.Label}");await Backend.WriteUsb(writePath,target,win,verify,AddLog,plan.BootMode,plan.Windows11Compatibility,preparedImage is null?null:path);
+            Status.Text="SHA-256 für den Stickpass wird berechnet …";
+            await using var original=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read,1024*1024,true);
+            string digest=Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(original));
+            InvalidateStickPass(target);
+            bool? efi=null;
+            Status.Text="USB-Stick wird geschrieben …";
+            AddLog($"Start: {path} → {target.Label}");
+            await Backend.WriteUsb(writePath,target,win,verify,line=>
+            {
+                const string prefix="STICKPASS_X64_EFI ";
+                if(line.StartsWith(prefix,StringComparison.Ordinal)&&bool.TryParse(line[prefix.Length..],out bool present))efi=present;
+                else AddLog(line);
+            },plan.BootMode,plan.Windows11Compatibility,preparedImage is null?null:path);
+            lastStickPass=StickPass.Record(target,plan,digest,selectedDownload?.Provider,selectedDownload?.Sha256,selectedDownload?.PublisherHashVerified,verify,efi)
+                with { ManualHashMatched=string.Equals(digest,selectedManualHash,StringComparison.OrdinalIgnoreCase) };
+            StickPassButton.IsEnabled=true;
             Progress.IsIndeterminate=false;Progress.Value=100;Status.Text="Abgeschlossen";
             AddLog(verify?"USB-Stick geschrieben und Datenprüfung erfolgreich.":"USB-Stick geschrieben; Datenprüfung abgewählt.");
-            MessageBox.Show(this,"Der USB-Stick wurde erfolgreich erstellt.","Startwerk");
+            AddLog("Stickpass verfügbar. Dort stehen Prüfergebnisse und Möglichkeiten zum Starttest.");
+            MessageBox.Show(this,"Der USB-Stick wurde erfolgreich erstellt. Der Stickpass ist in der Seitenleiste verfügbar.","Startwerk");
         }
         catch(Exception ex){Status.Text="Fehlgeschlagen";AddLog("FEHLER: "+ex.Message);MessageBox.Show(this,ex.Message+"\n\nNach einem Schreibfehler kann der USB-Stick unvollständig sein.","USB-Vorgang fehlgeschlagen",MessageBoxButton.OK,MessageBoxImage.Error);}
         finally{SetBusy(false);}
